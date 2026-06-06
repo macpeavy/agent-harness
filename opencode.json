@@ -26,11 +26,11 @@
   },
   "model": "litellm/builder",
   "agent": {
-    "feature-builder": {
+    "builder": {
       "description": "Implements one scoped feature end-to-end on the cheap route, opens a PR.",
       "mode": "subagent",
       "model": "litellm/builder",
-      "prompt": "{file:./agents/feature-builder.md}",
+      "prompt": "{file:./agents/builder.md}",
       "permission": {
         "edit": "allow",
         "webfetch": "allow",
