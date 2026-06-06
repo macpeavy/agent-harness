@@ -1,0 +1,39 @@
+# LiteLLM gateway — agent-harness spike
+# Routes per-persona model calls to OpenRouter and is the system of record for cost
+# (OpenCode can't see custom-provider spend — see docs/adrs/0002-gateway-litellm-openrouter.md).
+# Secrets come from the environment; never commit keys. See .env.example and config/README.md.
+#
+# Run:  source .venv/bin/activate && litellm --config config/litellm.yaml
+# Listens on http://localhost:4000 by default.
+
+model_list:
+  # ── Cheap builder seat (primary): coding-specialized MoE. ~$0.07 / $0.27 per M tokens.
+  - model_name: builder
+    litellm_params:
+      model: openrouter/qwen/qwen3-coder-30b-a3b-instruct
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # ── Cheap builder seat (alternate): for the AGENT-9 / G3 A/B. ~$0.10 / $0.20 per M, 1M ctx.
+  - model_name: builder-alt
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # ── Strong reviewer seat. ~$3 / $15 per M tokens.
+  - model_name: reviewer
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-4.6
+      api_key: os.environ/OPENROUTER_API_KEY
+
+litellm_settings:
+  # Drop params a given upstream doesn't support rather than 400-ing — keeps the
+  # same client call working across qwen / deepseek / anthropic via OpenRouter.
+  drop_params: true
+  # Per-request cost is logged for every call — the spike's cost signal for AGENT-9.
+  # NOTE: a persistent spend dashboard and cross-request hard-budget enforcement need
+  # a database (DATABASE_URL). For the spike the hard $25 ceiling is enforced at the
+  # OpenRouter key's credit limit (see config/README.md). Add the DB later for the UI.
+
+general_settings:
+  # The bearer key clients (OpenCode, the substrate) present to this gateway.
+  master_key: os.environ/LITELLM_MASTER_KEY
