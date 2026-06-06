@@ -27,9 +27,11 @@ for seat in builder builder-alt reviewer; do
   resp="$(curl -fsS "$BASE/v1/chat/completions" \
     -H "Authorization: Bearer $KEY" \
     -H "Content-Type: application/json" \
-    -d "{\"model\":\"$seat\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly: OK\"}],\"max_tokens\":16}" 2>/dev/null)" || {
+    -d "{\"model\":\"$seat\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly: OK\"}],\"max_tokens\":256}" 2>/dev/null)" || {
       echo "  request failed for $seat" >&2; rc=1; continue; }
-  content="$(printf '%s' "$resp" | jq -r '.choices[0].message.content // .error.message // "(no content)"' 2>/dev/null)"
+  # max_tokens is generous because reasoning models (e.g. deepseek-v4-flash) spend
+  # tokens on reasoning before emitting content; a tight cap truncates the answer away.
+  content="$(printf '%s' "$resp" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // .error.message // "(no content)"' 2>/dev/null)"
   echo "  ← $content"
 done
 
