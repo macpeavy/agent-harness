@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+.venv/
+__pycache__/
 
 # Secrets / environment — NEVER commit
 .env
