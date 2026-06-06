@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Secrets / environment — NEVER commit
+.env
+.env.local
+*.local
+mcp-auth.json
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Logs
+*.log
+logs/
+
+# Local runtime state (OpenCode sessions/auth, LiteLLM db) — not committed
+.opencode/
+*.db
+litellm.db
+
+# OS
+.DS_Store
+Thumbs.db

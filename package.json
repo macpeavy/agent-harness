@@ -1,0 +1,17 @@
+{
+  "name": "agent-harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Open, self-hosted runtime for an autonomous multi-agent software-engineering fleet (OpenCode + LiteLLM).",
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "substrate": "bun run src/index.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}
