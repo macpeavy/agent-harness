@@ -25,12 +25,22 @@
     }
   },
   "model": "litellm/builder",
+  "share": "disabled",
   "permission": {
     "edit": "allow",
-    "webfetch": "ask",
-    "websearch": "ask",
+    "webfetch": "deny",
+    "websearch": "deny",
+    "read": {
+      "*": "allow",
+      ".env": "deny",
+      "*.env": "deny",
+      "*.pem": "deny",
+      "*.key": "deny",
+      "id_rsa": "deny",
+      "id_rsa.*": "deny"
+    },
     "bash": {
-      "*": "ask",
+      "*": "deny",
       "ls *": "allow",
       "cat *": "allow",
       "head *": "allow",
