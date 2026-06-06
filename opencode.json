@@ -24,5 +24,46 @@
       }
     }
   },
-  "model": "litellm/builder"
+  "model": "litellm/builder",
+  "agent": {
+    "feature-builder": {
+      "description": "Implements one scoped feature end-to-end on the cheap route, opens a PR.",
+      "mode": "subagent",
+      "model": "litellm/builder",
+      "prompt": "{file:./agents/feature-builder.md}",
+      "permission": {
+        "edit": "allow",
+        "webfetch": "allow",
+        "bash": {
+          "*": "ask",
+          "git *": "allow",
+          "gh *": "allow",
+          "bun *": "allow",
+          "npm run *": "allow",
+          "ls *": "allow",
+          "cat *": "allow",
+          "rm -rf *": "deny",
+          "sudo *": "deny"
+        }
+      }
+    },
+    "reviewer": {
+      "description": "Reviews a PR/diff on the strong route; read-only, returns ranked findings.",
+      "mode": "subagent",
+      "model": "litellm/reviewer",
+      "prompt": "{file:./agents/reviewer.md}",
+      "permission": {
+        "edit": "deny",
+        "webfetch": "allow",
+        "bash": {
+          "*": "ask",
+          "git diff*": "allow",
+          "git log*": "allow",
+          "git show*": "allow",
+          "gh pr view*": "allow",
+          "gh pr diff*": "allow"
+        }
+      }
+    }
+  }
 }
