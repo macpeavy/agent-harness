@@ -25,6 +25,74 @@
     }
   },
   "model": "litellm/builder",
+  "permission": {
+    "edit": "allow",
+    "webfetch": "ask",
+    "websearch": "ask",
+    "bash": {
+      "*": "ask",
+      "ls *": "allow",
+      "cat *": "allow",
+      "head *": "allow",
+      "tail *": "allow",
+      "grep *": "allow",
+      "rg *": "allow",
+      "find *": "allow",
+      "fd *": "allow",
+      "pwd": "allow",
+      "echo *": "allow",
+      "which *": "allow",
+      "jq *": "allow",
+      "mkdir *": "allow",
+      "touch *": "allow",
+      "cp *": "allow",
+      "mv *": "allow",
+      "git *": "allow",
+      "gh *": "allow",
+      "bun *": "allow",
+      "node *": "allow",
+      "npm run *": "allow",
+      "npm test*": "allow",
+      "npm ci": "allow",
+      "uv *": "allow",
+      "sudo *": "deny",
+      "su *": "deny",
+      "doas *": "deny",
+      "rm -rf *": "deny",
+      "git push --force*": "deny",
+      "git push -f*": "deny",
+      "git push origin main*": "deny",
+      "git push origin master*": "deny",
+      "git push * main": "deny",
+      "git push * master": "deny",
+      "gh repo delete*": "deny",
+      "gh auth *": "deny",
+      "gh pr merge*": "deny",
+      "gh secret *": "deny",
+      "gh ssh-key *": "deny",
+      "npm publish*": "deny",
+      "apt *": "deny",
+      "apt-get *": "deny",
+      "aptitude *": "deny",
+      "dpkg *": "deny",
+      "snap *": "deny",
+      "npm install -g*": "deny",
+      "npm i -g*": "deny",
+      "npm install --global*": "deny",
+      "pnpm add -g*": "deny",
+      "yarn global *": "deny",
+      "pip install --user*": "deny",
+      "pip install --break-system-packages*": "deny",
+      "docker run*": "deny",
+      "docker rm*": "deny",
+      "docker rmi*": "deny",
+      "docker system prune*": "deny",
+      "* | sh": "deny",
+      "* | sh *": "deny",
+      "* | bash": "deny",
+      "* | bash *": "deny"
+    }
+  },
   "agent": {
     "builder": {
       "description": "Implements one scoped feature end-to-end on the cheap route, opens a PR.",
@@ -33,18 +101,7 @@
       "prompt": "{file:./agents/builder.md}",
       "permission": {
         "edit": "allow",
-        "webfetch": "allow",
-        "bash": {
-          "*": "ask",
-          "git *": "allow",
-          "gh *": "allow",
-          "bun *": "allow",
-          "npm run *": "allow",
-          "ls *": "allow",
-          "cat *": "allow",
-          "rm -rf *": "deny",
-          "sudo *": "deny"
-        }
+        "task": "deny"
       }
     },
     "reviewer": {
@@ -54,15 +111,7 @@
       "prompt": "{file:./agents/reviewer.md}",
       "permission": {
         "edit": "deny",
-        "webfetch": "allow",
-        "bash": {
-          "*": "ask",
-          "git diff*": "allow",
-          "git log*": "allow",
-          "git show*": "allow",
-          "gh pr view*": "allow",
-          "gh pr diff*": "allow"
-        }
+        "task": "deny"
       }
     }
   }
