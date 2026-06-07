@@ -15,7 +15,8 @@ src/
   opencode/           # generated typed client + thin wrappers over the REST API
   dispatch/           # issue → branch → build-leg; the plan→dispatch service + daemon
   substrate/          # bounded contexts (dispatch registry, plan) — model/schema/repository (ADR 0017)
-  mcp/                # the substrate MCP server — status/dispatch tools the chief calls (ADR 0019)
+  mcp/                # the substrate MCP server — decompose/dispatch/status tools the chief calls (ADR 0019)
+  cli/                # owner-facing entrypoints (e.g. approve a feature for dispatch — the owner's gate)
   wake/               # idle detection + prompt_async wake driver
   github/             # gh/git plumbing, PR creation, merge gate
 ```
