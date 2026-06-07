@@ -39,3 +39,27 @@ The review itself (sonnet, strong route) was sharp — ranked findings with file
 - `prompt_async` returns 204 (fire-and-forget). The client gained `promptAsync` + `waitForReply` (`src/opencode/client.ts`); the leg is `src/dispatch/review-leg.ts`.
 
 With **G1, G3-build, and G4 holding, the dispatch → build → PR → wake → review loop is proven end-to-end.** AGENT-9 formalizes the G3 verdict (mergeability judgment + cost-per-PR).
+
+## AGENT-9 — make-or-break verdict (gate G3) — PASS · 2026-06-07
+
+One real issue (`parseRoutes` util + tests) through the FULL loop — dispatch → build → PR → wake → review — via `src/dispatch/loop.ts`, with `bun install` in the worktree so the builder self-verifies.
+
+**Mergeability ✓** — the deepseek builder produced `src/util/parse-routes.ts` (clean, typed, documented, to spec) **and** `src/util/parse-routes.test.ts` (`bun:test`); the test passes **5/5**. Scoped to those two files. Genuinely mergeable (PR #26).
+
+**Cost ✓** — estimated from real token counts × current OpenRouter pricing:
+
+| leg | route | tokens (in/out) | cost |
+|---|---|---|---|
+| build | builder (deepseek-v4-flash) | 39,234 / 1,205 | $0.0042 |
+| review | reviewer (sonnet-4.6) | 21,255 / 678 | $0.0739 |
+| **total** | | | **$0.0781 / PR** |
+
+Target ≤ $2.80/PR (≈ $250 / 90 PRs). Actual **$0.078/PR — ~36× under**, ≈ $7/mo at 90 PRs/mo against the $250 ceiling. Most of the cost is the strong reviewer; the cheap builder is ~$0.004.
+
+---
+
+## Spike verdict — THESIS PROVEN · 2026-06-07
+
+Per `scope/final.md`'s decision rule: **G1 ✓, G3 (mergeability + cost) ✓, G4 ✓** (G2 routing held throughout). The dispatch → build → PR → token-free-wake → review loop runs end-to-end on an open stack (OpenCode + LiteLLM + OpenRouter): a cheap model writes mergeable, tested code; a strong model reviews; total ≈ $0.08/PR. **Both drivers delivered — lock-in escaped (open harness) and cost cut far below target. → Greenlight the full port.**
+
+Remaining spike items are parallel and non-thesis-gating: **G5** (Linear MCP path, AGENT-2) and **G6** (remote attach, AGENT-5). The security envelope (ADR 0007 / AGENT-11–16) gates unattended operation + deployment, not the thesis.

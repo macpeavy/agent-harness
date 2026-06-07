@@ -148,4 +148,21 @@ export class OpencodeClient {
     }
     throw new Error(`waitForReply: session ${sessionID} did not idle within ${timeoutMs}ms`);
   }
+
+  /** Sum input/output tokens across every assistant message in a session (the full
+   *  agentic loop, not just the final turn) — the basis for per-session cost. */
+  async sessionTokens(sessionID: string): Promise<{ input: number; output: number }> {
+    const msgs = (await this.get(`/session/${sessionID}/message`)) as Array<{
+      info?: { role?: string; tokens?: { input?: number; output?: number } };
+    }>;
+    let input = 0;
+    let output = 0;
+    for (const m of msgs ?? []) {
+      if (m.info?.role === "assistant") {
+        input += m.info.tokens?.input ?? 0;
+        output += m.info.tokens?.output ?? 0;
+      }
+    }
+    return { input, output };
+  }
 }
