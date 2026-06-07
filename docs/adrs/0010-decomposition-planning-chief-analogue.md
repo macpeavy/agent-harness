@@ -15,18 +15,19 @@ The spike's central finding (`docs/spike-results.md`) is that the cheap model's 
 
 **3. Output norm: artifacts over briefs.** The owner reads direction artifacts (ADRs, `roadmap.md`, Linear, `journal.md`, `vision.md`), not long prose briefs. The chief-analogue leads with the artifacts and an executive summary; the long-form brief is retired as a primary output. The `[Brief]` PR remains the ratify-by-merge vehicle for the artifact set.
 
-**4. Per-persona model-tier policy (two tiers to start):**
+**4. Per-persona model-tier policy:**
    - **Cheap tier — the builder** on well-decomposed chunks. A Western tool-calling model (see decision 5).
-   - **Strong tier — the chief/planner, the reviewer, amend-escalation builds, and any ambiguous/architectural/novel work.** These either reason at a level the cheap tier can't carry, or are bursty enough that their token cost is small against the build bulk.
-   Start two-tier. A middle tier (for heavy-but-patterned builds where a mid model beats cheap+3-amends) is added only if the registry instrument (ADR 0009) shows it pays — measured, not assumed.
+   - **Strong tier — the reviewer, amend-escalation builds, and any ambiguous/architectural/novel work.** Bursty enough that their token cost is small against the build bulk (the spike measured the strong reviewer at ~95% of per-PR cost, yet only ~$0.08).
+   - **The chief seat is decided by a live A/B, not assumed.** The chief is the strongest, highest-volume reasoning seat, so its model choice is the project's central economic question — and the Max subscription's cheap effective rate for top models is *not* reachable through the gateway (it is bound to first-party clients), so the chief runs at bare API prices. Rather than pre-commit, the port ships **two analogue personas with identical role and behavior, differing only in route**: **`chief` → the strong tier (Sonnet)**, the default; **`principal` → the best tier (Opus)**, swappable in for parallel testing. The owner runs real back-and-forth / planning / reasoning through both; chief cost is instrumented separately (ADR 0009 / the gateway dashboard). If the strong tier carries the chief seat with the owner barely noticing, the cheaper persona wins and the all-open vision holds on budget; if not, `principal` is there, and the cost (or a deliberate subscription-hybrid amendment) is confronted with a real number. `chief` keeps the primary name; `principal` is the premium analogue.
+   - A middle build tier (for heavy-but-patterned builds where a mid model beats cheap+3-amends) is added only if the registry instrument (ADR 0009) shows it pays — measured, not assumed.
 
 **5. The cheap builder is a Western tool-calling model, chosen by probe.** DeepSeek is dropped on data-governance grounds (the owner wants a real alternative, not Chinese-origin weights re-hosted). The hard filter is unchanged and non-negotiable: the model must **tool-call natively through OpenCode + LiteLLM** — the exact capability qwen3-coder lacked and DeepSeek had. Candidates A/B-tested with the spike's existing harness, **Mistral leading** on the data-governance story (EU, strong sovereignty options), with Gemini Flash and Claude Haiku 4.5 as comparators (Haiku a known-good tool-caller but pricier). The pick is whichever clears the tool-calling bar cheapest; pricing is pulled live at probe time, not assumed here.
 
 ## Consequences
 
-- The chief-analogue is positioned as the cost engine, which justifies its strong-tier spend: planning is bursty and high-leverage, and every chunk it makes cheap-able multiplies into cheap build tokens.
+- The chief-analogue is positioned as the cost engine, which justifies spending up on its seat: planning is bursty and high-leverage, and every chunk it makes cheap-able multiplies into cheap build tokens. *How far* up is the open economic question the `chief`/`principal` A/B answers.
 - The decomposition quality becomes a measurable, improvable property (amend-cap escalation rate), not a vibe — the planner can be tuned against it.
-- Two-tier keeps the policy simple and the cost model legible; the instrument tells us if/when a third tier is warranted.
+- The chief seat's economics — the one thing the spike did not measure — get a clean instrument: two identical personas on Sonnet vs Opus, chief cost tracked separately, decided by lived experience. The subscription-hybrid (chief on Claude Code, fleet open) stays a flagged fallback, taken only if `principal` is needed and bare-API Opus blows the budget — a deliberate amendment to the "no dual runtime" non-goal, not a default.
 - Dropping DeepSeek re-opens the tool-calling risk the spike closed, so the model probe is a real gate on the build tier — it must land a passing Western model before P2 leans on the cheap builder at volume.
 - Retiring the long brief changes the chief-analogue's persona port (output templates, the `[Brief]` PR body) — a concrete spec, not just a preference.
 
