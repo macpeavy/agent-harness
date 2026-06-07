@@ -12,16 +12,33 @@ import { estimateCost } from "./cost";
 const TARGET_PER_PR = Number(process.env.TARGET_PER_PR ?? "2.80"); // $250 / ~90 PRs/mo
 
 const ISSUE: Issue = {
-  id: "G3-1",
-  title: "Add a parseRoutes config helper with tests",
+  id: "REG-1",
+  title: "SQLite-backed dispatch registry",
   body:
-    "Add `src/util/parse-routes.ts` exporting `parseRoutes(input?: string): string[]`. " +
-    "It splits a comma-separated string into trimmed, non-empty route names; throws a " +
-    "clear Error if the result is empty; and when `input` is undefined falls back to the " +
-    "three spike routes ['builder', 'builder-alt', 'reviewer']. Keep it typed and documented. " +
-    "Add `src/util/parse-routes.test.ts` using `bun:test` covering: a normal CSV, surrounding " +
-    "whitespace, the undefined-default case, and the empty/whitespace-only throw. Run `bun test` " +
-    "and make sure it passes.",
+    "Add a SQLite-backed dispatch registry for the substrate using Bun's built-in `bun:sqlite` " +
+    "(no external deps, no server). New file `src/substrate/registry.ts`.\n\n" +
+    "A *dispatch* is the substrate's unit of work (one issue through build -> review -> PR). It sits " +
+    "ABOVE OpenCode's own session store, so this registry holds dispatch-level state and only LINKS " +
+    "to OpenCode session ids — it must NOT duplicate session/message data.\n\n" +
+    "Implement a `DispatchRegistry` class:\n" +
+    "- constructor takes a db file path (default `.orchestrator/dispatches.db`); opens the db and " +
+    "creates the schema if absent.\n" +
+    "- schema `dispatches`: id TEXT PRIMARY KEY, issue_id TEXT, title TEXT, branch TEXT, state TEXT, " +
+    "build_session_id TEXT NULL, review_session_id TEXT NULL, pr_url TEXT NULL, cost_usd REAL NULL, " +
+    "created_at INTEGER, updated_at INTEGER.\n" +
+    "- `create(rec)`: insert a new dispatch in state 'queued'.\n" +
+    "- `get(id)`: record or null. `list(filter?)`: optional filter by state, newest first.\n" +
+    "- `transition(id, toState)`: validate against the allowed graph (queued->building->review->done; " +
+    "any non-terminal -> failed) and THROW on an illegal transition; update state + updated_at in a " +
+    "transaction.\n" +
+    "- `setSessions(id, {buildSessionId?, reviewSessionId?})`, `setPr(id, url)`, `setCost(id, usd)`: " +
+    "link OpenCode session ids / PR / cost onto a dispatch.\n" +
+    "- `resumeIncomplete()`: return all dispatches in non-terminal states (crash recovery).\n" +
+    "Use prepared statements; wrap transition in a transaction.\n\n" +
+    "Add `src/substrate/registry.test.ts` (`bun:test`) against a temp db file (clean up after): " +
+    "create/get/list, a valid transition path, an illegal transition throwing, setSessions/setPr/setCost, " +
+    "and resumeIncomplete returning only non-terminal records.\n\n" +
+    "`bun test` and `bun run typecheck` must pass. Do not modify other files.",
 };
 
 async function main() {
