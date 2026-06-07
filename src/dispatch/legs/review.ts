@@ -17,14 +17,32 @@ export interface ReviewTarget {
   branch: string;
 }
 
+/** Whether the review found something worth an amend round (ADR 0008). */
+export type ReviewVerdict = "blocking" | "clean";
+
 export interface ReviewResult {
   pr: number;
   branch: string;
   review: string;
+  /** Parsed from the reviewer's mandatory final `VERDICT:` line — drives the amend cycle. */
+  verdict: ReviewVerdict;
   waitedMs: number;
   route: string;
   reviewSessionId: string;
   tokens: { input: number; output: number };
+}
+
+/**
+ * Read the reviewer's verdict from its output. The reviewer ends with a `VERDICT:
+ * blocking|clean` line (agents/reviewer.md); we take the last such line. Absent or
+ * unparseable → `blocking`, the safe default: never auto-ship a review we couldn't
+ * classify — a stuck dispatch escalates to a human rather than merging unread.
+ */
+export function parseVerdict(reviewText: string): ReviewVerdict {
+  const matches = reviewText.matchAll(/^\s*VERDICT:\s*(blocking|clean)\b/gim);
+  let last: ReviewVerdict | null = null;
+  for (const m of matches) last = m[1]?.toLowerCase() === "clean" ? "clean" : "blocking";
+  return last ?? "blocking";
 }
 
 export async function runReviewLeg(
@@ -58,6 +76,7 @@ export async function runReviewLeg(
     pr: target.pr,
     branch: target.branch,
     review: run.reply,
+    verdict: parseVerdict(run.reply),
     waitedMs: run.waitedMs,
     route: config.reviewerAgent,
     reviewSessionId: run.sessionId,

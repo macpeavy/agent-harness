@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DispatchDaemon, type DispatchLegs } from "./daemon";
 import { dispatchBranch, type BuildResult, type Issue } from "./legs/build";
-import type { ReviewResult, ReviewTarget } from "./legs/review";
+import type { ReviewResult, ReviewTarget, ReviewVerdict } from "./legs/review";
+import type { AmendResult } from "./legs/amend";
 import type { SubstrateConfig } from "../config";
 import { DispatchRepository } from "../substrate/dispatch";
 
@@ -14,6 +15,7 @@ const CONFIG: SubstrateConfig = {
   worktreeRoot: "/tmp/ah-test-wt",
   builderAgent: "builder",
   reviewerAgent: "reviewer",
+  amendCap: 3,
 };
 
 const ISSUE: Issue = { id: "ISSUE-1", title: "Add a thing", body: "Do the thing." };
@@ -46,15 +48,21 @@ function enqueue(id: string, issue: Issue = ISSUE): void {
 interface Recorder {
   build: Issue[];
   review: ReviewTarget[];
+  amend: { target: ReviewTarget; findings: string }[];
 }
 
-// Fake legs that record their calls and return canned success results. `buildOver`
-// lets a test tweak the build result (e.g. changed:false) or throw by issue id.
-function fakeLegs(opts: { buildThrowsFor?: string; changed?: boolean } = {}): {
-  legs: DispatchLegs;
-  rec: Recorder;
-} {
-  const rec: Recorder = { build: [], review: [] };
+// Fake legs that record their calls and return canned results. `reviewVerdicts` is
+// consumed in order (then defaults to "clean"); `buildThrowsFor` makes a build throw.
+function fakeLegs(
+  opts: {
+    buildThrowsFor?: string;
+    changed?: boolean;
+    reviewVerdicts?: ReviewVerdict[];
+    amendChanges?: boolean;
+  } = {},
+): { legs: DispatchLegs; rec: Recorder } {
+  const rec: Recorder = { build: [], review: [], amend: [] };
+  const verdicts = [...(opts.reviewVerdicts ?? [])];
   const changed = opts.changed ?? true;
   const legs: DispatchLegs = {
     async build(issue) {
@@ -79,11 +87,22 @@ function fakeLegs(opts: { buildThrowsFor?: string; changed?: boolean } = {}): {
       const result: ReviewResult = {
         pr: target.pr,
         branch: target.branch,
-        review: "LGTM",
+        review: "the findings",
+        verdict: verdicts.shift() ?? "clean",
         waitedMs: 10,
         route: "reviewer",
         reviewSessionId: "ses_review",
         tokens: { input: 2000, output: 800 },
+      };
+      return result;
+    },
+    async amend(target, findings) {
+      rec.amend.push({ target, findings });
+      const result: AmendResult = {
+        changed: opts.amendChanges ?? true,
+        reply: "amended",
+        route: "builder",
+        tokens: { input: 300, output: 150 },
       };
       return result;
     },
@@ -190,5 +209,79 @@ describe("fault isolation", () => {
 
     expect(repo.get("bad")?.state).toBe("failed");
     expect(repo.get("good")?.state).toBe("done");
+  });
+});
+
+describe("the amend cycle", () => {
+  it("a clean review goes straight to done — no amend round", async () => {
+    enqueue("d1");
+    const { legs, rec } = fakeLegs({ reviewVerdicts: ["clean"] });
+
+    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    expect(repo.get("d1")?.state).toBe("done");
+    expect(repo.get("d1")?.amendRounds).toBe(0);
+    expect(rec.amend).toHaveLength(0);
+  });
+
+  it("amends once when the review is blocking then clean, recording the round + cost", async () => {
+    enqueue("d1");
+    const { legs, rec } = fakeLegs({ reviewVerdicts: ["blocking", "clean"] });
+
+    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    const d = repo.get("d1");
+    expect(d?.state).toBe("done");
+    expect(d?.amendRounds).toBe(1);
+    expect(rec.amend).toHaveLength(1);
+    expect(rec.amend[0]?.findings).toBe("the findings");
+    expect(rec.review).toHaveLength(2); // initial + the re-review after the amend
+    expect(d?.amendCostUsd).toBeGreaterThan(0);
+    expect(d?.reviewCostUsd).toBeGreaterThan(0);
+  });
+
+  it("escalates (re-decompose) when the review stays blocking past the cap", async () => {
+    enqueue("d1");
+    const cap2 = { ...CONFIG, amendCap: 2 };
+    // blocking through the cap: review → amend → review → amend → review(blocking, cap hit)
+    const { legs, rec } = fakeLegs({ reviewVerdicts: ["blocking", "blocking", "blocking"] });
+
+    await new DispatchDaemon(repo, cap2, legs).runOnce();
+
+    const d = repo.get("d1");
+    expect(d?.state).toBe("escalated");
+    expect(d?.escalated).toBe("re-decompose");
+    expect(d?.amendRounds).toBe(2);
+    expect(rec.amend).toHaveLength(2);
+    expect(rec.review).toHaveLength(3);
+  });
+
+  it("escalates immediately when an amend changes nothing (the builder is stuck)", async () => {
+    enqueue("d1");
+    const { legs, rec } = fakeLegs({ reviewVerdicts: ["blocking"], amendChanges: false });
+
+    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    const d = repo.get("d1");
+    expect(d?.state).toBe("escalated");
+    expect(d?.escalated).toBe("re-decompose");
+    expect(d?.amendRounds).toBe(1);
+    expect(rec.amend).toHaveLength(1);
+    expect(rec.review).toHaveLength(1); // no wasted re-review of identical code
+  });
+
+  it("resumes an interrupted amend by re-reviewing", async () => {
+    enqueue("d1");
+    repo.transition("d1", "building");
+    repo.setPr("d1", "https://github.com/acme/widgets/pull/7");
+    repo.transition("d1", "review");
+    repo.transition("d1", "amending"); // an amend was in flight when the daemon died
+    const { legs, rec } = fakeLegs({ reviewVerdicts: ["clean"] });
+
+    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    expect(repo.get("d1")?.state).toBe("done");
+    expect(rec.build).toHaveLength(0);
+    expect(rec.review).toHaveLength(1);
   });
 });

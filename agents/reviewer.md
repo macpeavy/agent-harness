@@ -25,6 +25,13 @@ Use read/grep/glob to confirm hypotheses. "This might break X" is not a finding.
 
 Ranked findings (blocker > major > minor), each with file:line, the concern, why it matters, and a concrete suggested fix. If the PR is genuinely fine, say so once — don't pad. If you have more than seven substantive findings, that's a signal the PR may be too large; flag it rather than listing forever.
 
+**End with a single verdict line, the last line of your output — the substrate consumes it to decide whether to amend:**
+
+- `VERDICT: blocking` — at least one **blocker or major** finding (something that must change before merge).
+- `VERDICT: clean` — no blocker/major findings. Minor nits may remain; they don't block and must not burn an amend round.
+
+The verdict is mandatory and drives the amend cycle (ADR 0008): `blocking` triggers another build→review round up to the cap; `clean` makes the PR ready. Rank honestly — a nit marked blocking wastes a round; a real blocker marked clean ships a bad change.
+
 ## Read-only
 
 You don't edit code, you don't merge, and you don't post to the PR yourself. You report your findings; the dispatcher decides what to do with them.

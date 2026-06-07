@@ -32,6 +32,7 @@ describe("loadConfig", () => {
     "AH_WORKTREE_ROOT",
     "AH_BUILDER_AGENT",
     "AH_REVIEWER_AGENT",
+    "AH_AMEND_CAP",
   ] as const;
   let saved: Record<string, string | undefined>;
 
@@ -56,6 +57,7 @@ describe("loadConfig", () => {
     expect(config.worktreeRoot).toBe(join(tmpdir(), "ah-worktrees"));
     expect(config.builderAgent).toBe("builder");
     expect(config.reviewerAgent).toBe("reviewer");
+    expect(config.amendCap).toBe(3);
   });
 
   it("honors every override", async () => {
@@ -64,6 +66,7 @@ describe("loadConfig", () => {
     process.env.AH_WORKTREE_ROOT = "/srv/worktrees";
     process.env.AH_BUILDER_AGENT = "builder-alt";
     process.env.AH_REVIEWER_AGENT = "principal";
+    process.env.AH_AMEND_CAP = "5";
     const config = await loadConfig();
 
     expect(config).toEqual({
@@ -72,6 +75,13 @@ describe("loadConfig", () => {
       worktreeRoot: "/srv/worktrees",
       builderAgent: "builder-alt",
       reviewerAgent: "principal",
+      amendCap: 5,
     });
+  });
+
+  it("falls back to the default cap on a malformed AH_AMEND_CAP", async () => {
+    process.env.AH_GH_REPO = "acme/widgets";
+    process.env.AH_AMEND_CAP = "not-a-number";
+    expect((await loadConfig()).amendCap).toBe(3);
   });
 });
