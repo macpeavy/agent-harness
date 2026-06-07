@@ -83,3 +83,27 @@ Mechanism and cost are proven; the quality story is honest and conditional.
 **Limits of the evidence (not yet proven):** one heavy build of a *patterned* task (a CRUD + state-machine class, well-trodden for a coding model). The hardest classes — cross-codebase debugging, architecturally-ambiguous features, novel algorithms — are untested and may need a stronger build tier; chief/ADR-tier reasoning runs the strong model by design (no cheap-build saving there). So: **greenlight the port, with the amend cycle treated as load-bearing and the strong tier reserved for ambiguous/architectural work.** The headline ($250 → ~$7/mo) is directionally real for the build-heavy bulk; the exact blended figure depends on the cheap-able fraction, which the port measures under real load.
 
 Remaining spike items (parallel, non-gating): **G5** (Linear MCP, AGENT-2), **G6** (remote attach, AGENT-5). Security envelope (ADR 0007 / AGENT-11–16) gates unattended operation + deployment.
+
+---
+
+## Builder-model probe — replace DeepSeek with a Western tool-caller (AGENT-17) · 2026-06-07
+
+DeepSeek (and qwen) are China-origin and dropped on data governance (ADR 0010). The replacement must clear the spike's hard filter: **tool-call natively through OpenCode + LiteLLM** — qwen3-coder advertised tool-calling but emitted tool calls as *text* and couldn't edit a file. The screen is empirical: watch the model actually invoke the Write tool and change a file, not trust the model card. Desk research: `research/2026-06-07-builder-model-shortlist.md` (chief discovery workspace).
+
+**Method.** A builder agent pointed at each candidate route, driven through OpenCode by `src/probe-builder.ts`: (1) a single write-a-file task, then (2) a 3-file multi-step build (a util + its test + a marker — the "third tool call" failure mode the research flags for the Mistral lineage). PASS = the files actually land; FAIL = no file (text-emitted call). All routed via **OpenRouter** (the only key configured) — see the caveat below.
+
+**Result — all three candidates tool-call cleanly through the stack** (none text-emit; the qwen failure mode is absent). Cost is the representative multi-step build; baseline DeepSeek ≈ $0.005/build:
+
+| Candidate (via OpenRouter) | Origin | List $/M (in/out) | Single write | 3-file build | ~Cost/build |
+|---|---|---|---|---|---|
+| **Mistral Small 4** (`mistral-small-2603`) | EU (France) | 0.15 / 0.60 | PASS | PASS | $0.002–0.003 |
+| GPT-4.1-nano | US (OpenAI) | 0.10 / 0.40 | PASS | PASS | $0.001–0.002 |
+| Gemini 2.5 Flash Lite | US (Google) | 0.10 / 0.40 | PASS | PASS | $0.0016–0.0019 |
+
+**Pick: Mistral Small 4** (`openrouter/mistralai/mistral-small-2603`). It passes both screens, is **EU-governed** (the owner's stated default — state.yml), and its cost lands within a rounding error of the cheaper-per-token US options (its terseness offsets the higher rate). All three sit ~2–3× under the DeepSeek baseline. nano and gemini both passed and are kept as **validated Western alternates** (`builder-nano`, `builder-gemini`) for fallback / re-probe.
+
+**Switched:** `builder` route → Mistral in `config/litellm.yaml` + `opencode.json` (cost table in `dispatch/cost.ts` updated). **DeepSeek and qwen3-coder routes removed on governance grounds** (China-origin; National Intelligence Law).
+
+**Caveat — OpenRouter-only (two diagnostics deferred).** Only `OPENROUTER_API_KEY` is configured, so the protocol's two isolation tests were not run: (1) the GPT-4.1-nano baseline through LiteLLM's *OpenAI provider* (the reference impl) — it ran through OpenRouter's translation instead, a weaker "wiring vs model" baseline; (2) the Gemini **OpenRouter-vs-Google-direct** control — only the OpenRouter half ran, so a future Gemini tool-call drop can't yet be attributed to the translation layer vs the model. Both are revisitable with an OpenAI / Google key (`probe-builder.ts` re-runs them).
+
+**Quality caveat (research / AGENT-17).** Western cheap models trail the Chinese tier by ~20 BFCL points — the governance choice has a real quality cost that likely shows up as **more amend rounds**, not as tool-calling failures. The registry instrument (AGENT-18 / ADR 0009) measures it under real load; the amend cycle (AGENT-20 / ADR 0008) absorbs it.
