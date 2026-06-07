@@ -58,13 +58,14 @@ export function cheapAbleFraction(dispatches: Dispatch[]): Readout {
     if (d.state === "done") {
       reachedReady++;
     }
-    // Count terminal states (escalated and failed are terminal, not "done")
+    // Count terminal states (escalated and failed are terminal)
     else if (d.state === "escalated") {
       escalated++;
     } else if (d.state === "failed") {
       failed++;
-    } else {
-      // Non-terminal states: queued, building, review, amending
+    }
+    // Track inFlight (non-terminal states: queued, building, review, amending)
+    else {
       inFlight++;
     }
 
