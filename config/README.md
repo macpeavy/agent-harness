@@ -4,13 +4,17 @@ Configuration for the infrastructure processes. **No secrets ever** — credenti
 
 ## LiteLLM gateway — `litellm.yaml` (AGENT-1)
 
-The model spine. Three routes via OpenRouter:
+The model spine. Routes via OpenRouter (the live set; see `litellm.yaml` for pricing notes):
 
 | Route name | Model | Seat |
 |---|---|---|
-| `builder` | `qwen/qwen3-coder-30b-a3b-instruct` | cheap builder (primary) |
-| `builder-alt` | `deepseek/deepseek-v4-flash` | cheap builder (alternate, G3 A/B) |
+| `builder` | `mistralai/mistral-small-2603` | cheap builder (primary, EU-governed; AGENT-17) |
+| `builder-nano` | `openai/gpt-4.1-nano` | cheap builder (validated Western alternate) |
+| `builder-gemini` | `google/gemini-2.5-flash-lite` | cheap builder (validated Western alternate) |
 | `reviewer` | `anthropic/claude-sonnet-4.6` | strong reviewer |
+| `chief` | `anthropic/claude-sonnet-4.6` | strong — the decomposition / cost engine (ADR 0019) |
+
+(The original `qwen`/`deepseek` cheap routes were removed on data-governance grounds — China-origin, National Intelligence Law; see `litellm.yaml`.)
 
 ### Run it
 
@@ -29,7 +33,7 @@ litellm --config config/litellm.yaml # → http://localhost:4000
 
 ```bash
 set -a; source .env; set +a
-./scripts/verify-gateway.sh           # health + a completion on each of the 3 routes
+./scripts/verify-gateway.sh           # health + a completion on each route
 ```
 
 ### The $25 hard cap

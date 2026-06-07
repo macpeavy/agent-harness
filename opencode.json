@@ -17,6 +17,10 @@
           "name": "reviewer — claude-sonnet-4.6 (strong)",
           "limit": { "context": 1000000, "output": 64000 }
         },
+        "chief": {
+          "name": "chief — claude-sonnet-4.6 (strong; the decomposition / cost engine)",
+          "limit": { "context": 1000000, "output": 64000 }
+        },
         "builder-nano": {
           "name": "builder-nano — gpt-4.1-nano (validated Western alternate, AGENT-17)",
           "limit": { "context": 1000000, "output": 32000 }
@@ -122,7 +126,8 @@
       "prompt": "{file:./agents/builder.md}",
       "permission": {
         "edit": "allow",
-        "task": "deny"
+        "task": "deny",
+        "substrate_*": "deny"
       }
     },
     "reviewer": {
@@ -132,7 +137,8 @@
       "prompt": "{file:./agents/reviewer.md}",
       "permission": {
         "edit": "deny",
-        "task": "deny"
+        "task": "deny",
+        "substrate_*": "deny"
       }
     },
     "builder-nano": {
@@ -140,14 +146,28 @@
       "mode": "all",
       "model": "litellm/builder-nano",
       "prompt": "{file:./agents/builder.md}",
-      "permission": { "edit": "allow", "task": "deny" }
+      "permission": { "edit": "allow", "task": "deny", "substrate_*": "deny" }
     },
     "builder-gemini": {
       "description": "Validated Western alternate (AGENT-17): builder persona on gemini-2.5-flash-lite.",
       "mode": "all",
       "model": "litellm/builder-gemini",
       "prompt": "{file:./agents/builder.md}",
-      "permission": { "edit": "allow", "task": "deny" }
+      "permission": { "edit": "allow", "task": "deny", "substrate_*": "deny" }
+    },
+    "chief": {
+      "description": "Decomposes features into cheap-able chunk-DAGs and drives the fleet via the substrate MCP (decompose/dispatch/status); never builds. Strong route, owner-facing.",
+      "mode": "primary",
+      "model": "litellm/chief",
+      "prompt": "{file:./agents/chief.md}",
+      "permission": {
+        "edit": "deny",
+        "task": "deny",
+        "webfetch": "deny",
+        "websearch": "deny",
+        "bash": "deny",
+        "substrate_*": "allow"
+      }
     }
   }
 }
