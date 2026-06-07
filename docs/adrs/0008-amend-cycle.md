@@ -21,6 +21,8 @@ Make **build → review → amend → merge** the standard dispatch lifecycle, w
    - **Promote the build tier** — re-run the build on a stronger model for that chunk (the model-tier policy, ADR 0010).
    - **Hand to attended** — surface to the human/companion when neither lands.
 
+**Escalation pauses, it does not kill.** `escalated` is a *paused* state, not a terminal one: a cap-exceeded dispatch parks there carrying its escalation kind, and is **rewoken on resolution** — re-decompose / tier-promote / attended-fix all re-enter the pipeline at `building` — or is abandoned to `failed` if resolution gives up. Because the state is non-terminal, `resumeIncomplete()` surfaces parked dispatches; the daemon does *not* auto-run them — it leaves them parked until an external rewake signal (the wake is external, ADR 0004). So the transition graph (ADR 0009) reads `escalated → building | failed`, and the resolution signal drives the rewake.
+
 Each amend round, the cap, and any escalation are recorded on the dispatch (ADR 0009) — this is also the instrument that measures decomposition quality.
 
 ## Consequences

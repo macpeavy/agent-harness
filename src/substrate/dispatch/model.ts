@@ -36,7 +36,11 @@ export const TRANSITIONS: Record<DispatchState, readonly DispatchState[]> = {
   review: ["amending", "done", "escalated", "failed"],
   amending: ["review", "escalated", "failed"],
   done: [],
-  escalated: [],
+  // `escalated` is a PAUSED state, not terminal: a cap-exceeded dispatch parks here
+  // and is rewoken on resolution — re-decompose / tier-promote / attended all re-enter
+  // at `building` — or is abandoned to `failed` (ADR 0008). Because it's non-terminal,
+  // resumeIncomplete() surfaces it; the daemon parks it until an external rewake.
+  escalated: ["building", "failed"],
   failed: [],
 };
 

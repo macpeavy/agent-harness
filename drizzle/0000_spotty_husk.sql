@@ -3,6 +3,7 @@ CREATE TABLE `dispatches` (
 	`issue_id` text NOT NULL,
 	`title` text NOT NULL,
 	`branch` text NOT NULL,
+	`spec` text NOT NULL,
 	`state` text DEFAULT 'queued' NOT NULL,
 	`build_session_id` text,
 	`review_session_id` text,

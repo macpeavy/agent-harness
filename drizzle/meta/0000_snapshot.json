@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "9f1d07ed-3626-4dda-8858-55032676de96",
+  "id": "e931819d-f823-40eb-a6a2-656bb659f156",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "dispatches": {
@@ -30,6 +30,13 @@
         },
         "branch": {
           "name": "branch",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "spec": {
+          "name": "spec",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
