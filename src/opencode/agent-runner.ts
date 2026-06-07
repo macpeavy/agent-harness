@@ -24,6 +24,8 @@ export interface RunAgentOpts {
 }
 
 export interface AgentRun {
+  /** The OpenCode session id — the registry links it onto the dispatch (ADR 0009). */
+  sessionId: string;
   reply: string;
   tokens: { input: number; output: number };
   /** Wall time from prompt fired to reply collected (the idle wait, in `wake` mode). */
@@ -45,7 +47,7 @@ export async function runAgent(worktree: string, opts: RunAgentOpts): Promise<Ag
     const waitedMs = Date.now() - start;
 
     const tokens = await client.sessionTokens(sessionID);
-    return { reply, tokens, waitedMs };
+    return { sessionId: sessionID, reply, tokens, waitedMs };
   } finally {
     serve.stop();
   }

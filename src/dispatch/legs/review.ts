@@ -23,6 +23,7 @@ export interface ReviewResult {
   review: string;
   waitedMs: number;
   route: string;
+  reviewSessionId: string;
   tokens: { input: number; output: number };
 }
 
@@ -59,6 +60,7 @@ export async function runReviewLeg(
     review: run.reply,
     waitedMs: run.waitedMs,
     route: config.reviewerAgent,
+    reviewSessionId: run.sessionId,
     tokens: run.tokens,
   };
 }
