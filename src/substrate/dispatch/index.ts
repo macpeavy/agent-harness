@@ -5,6 +5,9 @@
 export { DispatchRepository } from "./repository";
 export type { CreateDispatch, SessionLinks, DispatchFilter } from "./repository";
 
+export { cheapAbleFraction } from "./readout";
+export type { Readout } from "./readout";
+
 export {
   TRANSITIONS,
   isTerminal,
