@@ -10,6 +10,7 @@ import { $ } from "bun";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { runAgent } from "../../opencode/agent-runner";
+import { removeWorktree } from "./worktree";
 import type { SubstrateConfig } from "../../config";
 
 export interface ReviewTarget {
@@ -53,33 +54,37 @@ export async function runReviewLeg(
   const worktree = join(config.worktreeRoot, `review-${target.pr}`);
 
   // Idempotent: clear any prior worktree, then check out the PR head (detached).
-  await $`git -C ${config.repoPath} worktree remove --force ${worktree}`.nothrow().quiet();
+  await removeWorktree(config.repoPath, worktree);
   await $`git -C ${config.repoPath} fetch origin ${target.branch} main`.quiet();
   await $`git -C ${config.repoPath} worktree add --detach ${worktree} origin/${target.branch}`.quiet();
 
-  // Run the reviewer over the token-free wake.
-  const prompt =
-    `Review the changes on this branch against main. Run \`git diff origin/main...HEAD\` ` +
-    `to see the diff, then return ranked findings per your role. You are read-only — do not edit or commit.`;
-  const run = await runAgent(worktree, {
-    title: `review PR #${target.pr}`,
-    agent: config.reviewerAgent,
-    prompt,
-    mode: "wake",
-  });
+  try {
+    // Run the reviewer over the token-free wake.
+    const prompt =
+      `Review the changes on this branch against main. Run \`git diff origin/main...HEAD\` ` +
+      `to see the diff, then return ranked findings per your role. You are read-only — do not edit or commit.`;
+    const run = await runAgent(worktree, {
+      title: `review PR #${target.pr}`,
+      agent: config.reviewerAgent,
+      prompt,
+      mode: "wake",
+    });
 
-  // Substrate posts the reviewer's findings (comment only).
-  const body = `**Automated review — ${config.reviewerAgent} route, dispatched via the token-free wake:**\n\n${run.reply}`;
-  await $`gh pr comment ${target.pr} --repo ${config.ghRepo} --body ${body}`.quiet();
+    // Substrate posts the reviewer's findings (comment only).
+    const body = `**Automated review — ${config.reviewerAgent} route, dispatched via the token-free wake:**\n\n${run.reply}`;
+    await $`gh pr comment ${target.pr} --repo ${config.ghRepo} --body ${body}`.quiet();
 
-  return {
-    pr: target.pr,
-    branch: target.branch,
-    review: run.reply,
-    verdict: parseVerdict(run.reply),
-    waitedMs: run.waitedMs,
-    route: config.reviewerAgent,
-    reviewSessionId: run.sessionId,
-    tokens: run.tokens,
-  };
+    return {
+      pr: target.pr,
+      branch: target.branch,
+      review: run.reply,
+      verdict: parseVerdict(run.reply),
+      waitedMs: run.waitedMs,
+      route: config.reviewerAgent,
+      reviewSessionId: run.sessionId,
+      tokens: run.tokens,
+    };
+  } finally {
+    await removeWorktree(config.repoPath, worktree);
+  }
 }

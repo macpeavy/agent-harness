@@ -10,6 +10,7 @@ import { $ } from "bun";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { runAgent } from "../../opencode/agent-runner";
+import { removeWorktree } from "./worktree";
 import type { SubstrateConfig } from "../../config";
 
 export interface Issue {
@@ -50,7 +51,7 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
   const worktree = join(config.worktreeRoot, `build-${id}`);
 
   // Idempotent: clear any worktree/branch left by a prior run.
-  await $`git -C ${config.repoPath} worktree remove --force ${worktree}`.nothrow().quiet();
+  await removeWorktree(config.repoPath, worktree);
   await $`git -C ${config.repoPath} branch -D ${branch}`.nothrow().quiet();
 
   // 1. Isolated worktree on a fresh branch off the latest origin/main.
@@ -59,53 +60,59 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
   // Install deps so the builder can typecheck/test its own work in-worktree.
   await $`bun install`.cwd(worktree).quiet();
 
-  // 2. Run the builder in the worktree (synchronous drive).
-  const prompt =
-    `Implement the following issue by editing files in the current working directory. ` +
-    `Use your tools to make the change, then typecheck/test it. Do NOT run git or open a ` +
-    `pull request — the substrate handles version control for you.\n\n` +
-    `Issue ${issue.id}: ${issue.title}\n\n${issue.body}`;
-  const run = await runAgent(worktree, {
-    title: `build ${issue.id}`,
-    agent: config.builderAgent,
-    prompt,
-    mode: "sync",
-  });
+  try {
+    // 2. Run the builder in the worktree (synchronous drive).
+    const prompt =
+      `Implement the following issue by editing files in the current working directory. ` +
+      `Use your tools to make the change, then typecheck/test it. Do NOT run git or open a ` +
+      `pull request — the substrate handles version control for you.\n\n` +
+      `Issue ${issue.id}: ${issue.title}\n\n${issue.body}`;
+    const run = await runAgent(worktree, {
+      title: `build ${issue.id}`,
+      agent: config.builderAgent,
+      prompt,
+      mode: "sync",
+    });
 
-  // 3. Did the builder actually change anything?
-  const status = (await $`git -C ${worktree} status --porcelain`.text()).trim();
-  if (!status) {
+    // 3. Did the builder actually change anything?
+    const status = (await $`git -C ${worktree} status --porcelain`.text()).trim();
+    if (!status) {
+      return {
+        branch,
+        worktree,
+        changed: false,
+        reply: run.reply,
+        route: config.builderAgent,
+        buildSessionId: run.sessionId,
+        tokens: run.tokens,
+      };
+    }
+
+    // 4. Substrate owns git + GitHub.
+    const commitMsg = `feat: ${issue.title} (${issue.id})`;
+    await $`git -C ${worktree} add -A`.quiet();
+    await $`git -C ${worktree} commit -q -m ${commitMsg}`;
+    await $`git -C ${worktree} push -u origin ${branch}`.quiet();
+    const prBody =
+      `Built by the cheap builder route and dispatched by the substrate.\n\n` +
+      `**Issue ${issue.id}:** ${issue.title}\n\n${issue.body}`;
+    const prUrl = (
+      await $`gh pr create --repo ${config.ghRepo} --head ${branch} --base main --title ${commitMsg} --body ${prBody}`.text()
+    ).trim();
+
     return {
       branch,
       worktree,
-      changed: false,
+      changed: true,
       reply: run.reply,
+      prUrl,
       route: config.builderAgent,
       buildSessionId: run.sessionId,
       tokens: run.tokens,
     };
+  } finally {
+    // The branch is pushed; the local worktree is no longer needed. Removing it frees
+    // the branch for the amend leg and keeps the daemon from accumulating worktrees.
+    await removeWorktree(config.repoPath, worktree);
   }
-
-  // 4. Substrate owns git + GitHub.
-  const commitMsg = `feat: ${issue.title} (${issue.id})`;
-  await $`git -C ${worktree} add -A`.quiet();
-  await $`git -C ${worktree} commit -q -m ${commitMsg}`;
-  await $`git -C ${worktree} push -u origin ${branch}`.quiet();
-  const prBody =
-    `Built by the cheap builder route and dispatched by the substrate.\n\n` +
-    `**Issue ${issue.id}:** ${issue.title}\n\n${issue.body}`;
-  const prUrl = (
-    await $`gh pr create --repo ${config.ghRepo} --head ${branch} --base main --title ${commitMsg} --body ${prBody}`.text()
-  ).trim();
-
-  return {
-    branch,
-    worktree,
-    changed: true,
-    reply: run.reply,
-    prUrl,
-    route: config.builderAgent,
-    buildSessionId: run.sessionId,
-    tokens: run.tokens,
-  };
 }

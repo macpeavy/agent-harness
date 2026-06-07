@@ -10,6 +10,7 @@ import { $ } from "bun";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { runAgent } from "../../opencode/agent-runner";
+import { removeWorktree } from "./worktree";
 import type { SubstrateConfig } from "../../config";
 import type { ReviewTarget } from "./review";
 
@@ -29,36 +30,41 @@ export async function runAmendLeg(
   const worktree = join(config.worktreeRoot, `amend-${target.pr}`);
 
   // Idempotent: clear any prior worktree, then check out the PR branch so we can commit
-  // and push back to it. --force overrides the guard against the branch already being
-  // checked out in the build worktree (worktree lifecycle cleanup is a separate concern).
-  await $`git -C ${config.repoPath} worktree remove --force ${worktree}`.nothrow().quiet();
+  // and push back to it. --force is defensive: the legs clean up their worktrees, but a
+  // daemon killed between a build's push and its teardown could leave the build worktree
+  // holding this branch, and --force overrides that already-checked-out guard.
+  await removeWorktree(config.repoPath, worktree);
   await $`git -C ${config.repoPath} fetch origin ${target.branch}`.quiet();
   await $`git -C ${config.repoPath} worktree add --force ${worktree} -B ${target.branch} origin/${target.branch}`.quiet();
   // Install deps so the builder can typecheck/test its amend in-worktree.
   await $`bun install`.cwd(worktree).quiet();
 
-  const prompt =
-    `A reviewer raised blocking findings on your change. Address them by editing files in ` +
-    `the current working directory, then typecheck/test. Do NOT run git or touch the PR — ` +
-    `the substrate handles version control.\n\nReview findings:\n\n${findings}`;
-  const run = await runAgent(worktree, {
-    title: `amend PR #${target.pr}`,
-    agent: config.builderAgent,
-    prompt,
-    mode: "sync",
-  });
+  try {
+    const prompt =
+      `A reviewer raised blocking findings on your change. Address them by editing files in ` +
+      `the current working directory, then typecheck/test. Do NOT run git or touch the PR — ` +
+      `the substrate handles version control.\n\nReview findings:\n\n${findings}`;
+    const run = await runAgent(worktree, {
+      title: `amend PR #${target.pr}`,
+      agent: config.builderAgent,
+      prompt,
+      mode: "sync",
+    });
 
-  // Did the amend change anything?
-  const status = (await $`git -C ${worktree} status --porcelain`.text()).trim();
-  if (!status) {
-    return { changed: false, reply: run.reply, route: config.builderAgent, tokens: run.tokens };
+    // Did the amend change anything?
+    const status = (await $`git -C ${worktree} status --porcelain`.text()).trim();
+    if (!status) {
+      return { changed: false, reply: run.reply, route: config.builderAgent, tokens: run.tokens };
+    }
+
+    // Push the fix onto the same branch — the PR updates in place.
+    const commitMsg = `fix: address review findings (PR #${target.pr})`;
+    await $`git -C ${worktree} add -A`.quiet();
+    await $`git -C ${worktree} commit -q -m ${commitMsg}`;
+    await $`git -C ${worktree} push origin ${target.branch}`.quiet();
+
+    return { changed: true, reply: run.reply, route: config.builderAgent, tokens: run.tokens };
+  } finally {
+    await removeWorktree(config.repoPath, worktree);
   }
-
-  // Push the fix onto the same branch — the PR updates in place.
-  const commitMsg = `fix: address review findings (PR #${target.pr})`;
-  await $`git -C ${worktree} add -A`.quiet();
-  await $`git -C ${worktree} commit -q -m ${commitMsg}`;
-  await $`git -C ${worktree} push origin ${target.branch}`.quiet();
-
-  return { changed: true, reply: run.reply, route: config.builderAgent, tokens: run.tokens };
 }
