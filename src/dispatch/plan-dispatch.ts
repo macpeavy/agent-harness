@@ -131,19 +131,31 @@ export class PlanDispatchService {
   }
 
   /**
-   * Materialise every ready chunk of an owner-approved feature as a dispatch: create the
-   * registry row (spec assembled from the chunk, curation carried on its own columns),
+   * Approve a feature (if needed) and materialise its ready chunks as dispatches: create
+   * the registry row (spec assembled from the chunk, curation carried on its own columns),
    * then link it back onto the chunk. The running daemon picks the queued rows up.
    *
-   * The owner-approval gate is the feature state (ADR 0019): a feature must be 'ready'
-   * (or already 'building') to dispatch — a still-'planning' feature hasn't been approved.
+   * Approval is folded in (ADR 0019): calling dispatch on a still-'planning' feature
+   * transitions it planning → ready → building. In attended mode this IS the owner's gate —
+   * the chief calls dispatch only on the owner's explicit conversational "go" (agents/
+   * chief.md), so the act of dispatching is the act of approving. The hard, structurally
+   * un-self-approvable boundary is unchanged: the owner approves every PR on GitHub (the
+   * merge gate). Async approval — approving outside the chief session — is deferred to the
+   * dashboard (ADR 0015), which can hold the un-self-approvable property; not a raw CLI.
    * Returns the chunk→dispatch links created (empty if nothing is ready).
    */
   dispatchReady(featureId: string): MaterialisedDispatch[] {
     const feature = this.plan.getFeature(featureId);
     if (!feature) throw new Error(`no feature ${featureId}`);
-    if (feature.state === "planning")
-      throw new Error(`feature ${featureId} is not owner-approved for dispatch (state 'planning')`);
+
+    // The conversational approval: a planning feature is approved (planning → ready) as
+    // part of dispatching it. The plan model owns the transition + its validation (ADR
+    // 0017); dispatch is just the trigger. Track the state locally to avoid a re-read.
+    let state = feature.state;
+    if (state === "planning") {
+      this.plan.transitionFeature(featureId, "ready");
+      state = "ready";
+    }
 
     const ready = this.plan.readyChunks(featureId);
     const materialised: MaterialisedDispatch[] = [];
@@ -177,7 +189,7 @@ export class PlanDispatchService {
     }
 
     // First dispatch of an approved feature moves it into 'building'.
-    if (materialised.length > 0 && feature.state === "ready")
+    if (materialised.length > 0 && state === "ready")
       this.plan.transitionFeature(featureId, "building");
 
     return materialised;

@@ -81,7 +81,8 @@ export function renderDecomposed(d: Decomposed): string {
   return (
     `Decomposed feature ${d.featureId} into ${d.chunkIds.length} chunk(s) ` +
     `(${d.edgeCount} edge(s)): ${d.chunkIds.join(", ")}.\n` +
-    `Awaiting owner approval — nothing dispatches until the feature is approved.`
+    `Plan written. Present it and ask the owner to proceed — call dispatch only on their ` +
+    `explicit go (dispatching is approving).`
   );
 }
 
