@@ -9,9 +9,11 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "fanout": "bun run src/fanout-stress.ts",
     "substrate": "bun run src/index.ts"
   },
   "devDependencies": {
+    "@types/bun": "^1.3.0",
     "typescript": "^5.5.0"
   }
 }
