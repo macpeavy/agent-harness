@@ -1,16 +1,19 @@
-// AGENT-8 — review + wake leg (gate G4).
+// The review leg (service layer) — review a PR with the strong reviewer over the
+// token-free wake.
 //
-// Given a PR (number + branch), check out the branch in an isolated worktree,
-// dispatch the `reviewer` (strong route) over HTTP using the *token-free wake*:
-// fire the prompt with prompt_async, then poll for the session to go idle
-// (the substrate waits — not the agent — so no tokens burn while idle), collect
-// the review, and post it on the PR. Builds on AGENT-7's serve + client.
-//
-// Run a one-off:  REVIEW_PR=23 bun run src/dispatch/review-leg.ts   (gateway up + env)
+// Given a PR (number + branch) and the substrate config, it checks out the branch in
+// an isolated worktree, dispatches the reviewer agent (strong route) over HTTP using
+// the *token-free wake* (fire the prompt with prompt_async, then poll for the session
+// to go idle — the substrate waits, not the agent, so no tokens burn while idle),
+// collects the review, and posts it on the PR. Returns its result; the daemon
+// (AGENT-19) persists the transitions — the leg holds no registry/SQL.
 
 import { $ } from "bun";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { OpencodeClient } from "../opencode/client";
 import { startServe } from "../opencode/serve";
+import type { SubstrateConfig } from "../config";
 
 export interface ReviewTarget {
   pr: number;
@@ -26,24 +29,28 @@ export interface ReviewResult {
   tokens: { input: number; output: number };
 }
 
-const REPO = process.env.AH_REPO ?? "/home/claude-dev/Developer/agent-harness";
-const GH_REPO = process.env.AH_GH_REPO ?? "macpeavy/agent-harness";
-
-export async function runReviewLeg(target: ReviewTarget): Promise<ReviewResult> {
-  const worktree = `/tmp/ah-review-${target.pr}`;
+export async function runReviewLeg(
+  target: ReviewTarget,
+  config: SubstrateConfig,
+): Promise<ReviewResult> {
+  mkdirSync(config.worktreeRoot, { recursive: true });
+  const worktree = join(config.worktreeRoot, `review-${target.pr}`);
 
   // Idempotent: clear any prior worktree, then check out the PR head (detached).
-  await $`git -C ${REPO} worktree remove --force ${worktree}`.nothrow().quiet();
-  await $`git -C ${REPO} fetch origin ${target.branch} main`.quiet();
-  await $`git -C ${REPO} worktree add --detach ${worktree} origin/${target.branch}`.quiet();
+  await $`git -C ${config.repoPath} worktree remove --force ${worktree}`.nothrow().quiet();
+  await $`git -C ${config.repoPath} fetch origin ${target.branch} main`.quiet();
+  await $`git -C ${config.repoPath} worktree add --detach ${worktree} origin/${target.branch}`.quiet();
 
-  const serve = await startServe(worktree, 4098);
+  const serve = await startServe(worktree);
   let review = "";
   let waitedMs = 0;
   let tokens = { input: 0, output: 0 };
   try {
     const client = new OpencodeClient(serve.baseUrl);
-    const sessionID = await client.createSession({ title: `review PR #${target.pr}`, agent: "reviewer" });
+    const sessionID = await client.createSession({
+      title: `review PR #${target.pr}`,
+      agent: config.reviewerAgent,
+    });
     const prompt =
       `Review the changes on this branch against main. Run \`git diff origin/main...HEAD\` ` +
       `to see the diff, then return ranked findings per your role. You are read-only — do not edit or commit.`;
@@ -59,17 +66,8 @@ export async function runReviewLeg(target: ReviewTarget): Promise<ReviewResult> 
   }
 
   // Substrate posts the reviewer's findings (comment only).
-  const body = `**Automated review — reviewer route, dispatched via the token-free wake (AGENT-8):**\n\n${review}`;
-  await $`gh pr comment ${target.pr} --repo ${GH_REPO} --body ${body}`.quiet();
+  const body = `**Automated review — ${config.reviewerAgent} route, dispatched via the token-free wake:**\n\n${review}`;
+  await $`gh pr comment ${target.pr} --repo ${config.ghRepo} --body ${body}`.quiet();
 
-  return { pr: target.pr, branch: target.branch, review, waitedMs, route: "reviewer", tokens };
-}
-
-if (import.meta.main) {
-  const pr = Number(process.env.REVIEW_PR ?? "23");
-  const branch = process.env.REVIEW_BRANCH ?? "agent/test-1-add-a-requireenv-helper";
-  const res = await runReviewLeg({ pr, branch });
-  console.log(`\n── review of PR #${res.pr} (idle detected after ${res.waitedMs}ms via wake) ──\n`);
-  console.log(res.review);
-  process.exit(res.review.length > 0 ? 0 : 1);
+  return { pr: target.pr, branch: target.branch, review, waitedMs, route: config.reviewerAgent, tokens };
 }

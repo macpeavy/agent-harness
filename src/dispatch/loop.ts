@@ -8,6 +8,7 @@
 import { runBuildLeg, type Issue } from "./build-leg";
 import { runReviewLeg } from "./review-leg";
 import { estimateCost } from "./cost";
+import { loadConfig } from "../config";
 
 const TARGET_PER_PR = Number(process.env.TARGET_PER_PR ?? "2.80"); // $250 / ~90 PRs/mo
 
@@ -44,7 +45,8 @@ const ISSUE: Issue = {
 async function main() {
   console.log(`AGENT-9 / G3 — full loop on ${ISSUE.id}: ${ISSUE.title}\n`);
 
-  const build = await runBuildLeg(ISSUE);
+  const config = await loadConfig();
+  const build = await runBuildLeg(ISSUE, config);
   if (!build.changed || !build.prUrl) {
     console.log(`✗ builder produced no change — G3 FAIL (build leg)`);
     process.exit(1);
@@ -52,7 +54,7 @@ async function main() {
   const prNumber = Number(build.prUrl.split("/").pop());
   console.log(`✓ build → ${build.prUrl}  [${build.route}: ${build.tokens.input}in/${build.tokens.output}out tok]`);
 
-  const review = await runReviewLeg({ pr: prNumber, branch: build.branch });
+  const review = await runReviewLeg({ pr: prNumber, branch: build.branch }, config);
   console.log(`✓ review posted (idle after ${review.waitedMs}ms)  [${review.route}: ${review.tokens.input}in/${review.tokens.output}out tok]`);
 
   const buildCost = estimateCost(build.route, build.tokens.input, build.tokens.output);
