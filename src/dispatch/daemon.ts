@@ -12,6 +12,7 @@
 import { estimateCost } from "./cost";
 import { dispatchBranch, runBuildLeg, type BuildResult, type Issue } from "./legs/build";
 import { runReviewLeg, type ReviewResult, type ReviewTarget } from "./legs/review";
+import { runAmendLeg, type AmendResult } from "./legs/amend";
 import { loadConfig, type SubstrateConfig } from "../config";
 import { DispatchRepository, TRANSITIONS, type Dispatch } from "../substrate/dispatch";
 
@@ -19,9 +20,14 @@ import { DispatchRepository, TRANSITIONS, type Dispatch } from "../substrate/dis
 export interface DispatchLegs {
   build(issue: Issue, config: SubstrateConfig): Promise<BuildResult>;
   review(target: ReviewTarget, config: SubstrateConfig): Promise<ReviewResult>;
+  amend(target: ReviewTarget, findings: string, config: SubstrateConfig): Promise<AmendResult>;
 }
 
-const defaultLegs: DispatchLegs = { build: runBuildLeg, review: runReviewLeg };
+const defaultLegs: DispatchLegs = {
+  build: runBuildLeg,
+  review: runReviewLeg,
+  amend: runAmendLeg,
+};
 
 // Extract the PR number from a PR url (…/pull/41 → 41), or null if absent/unparseable.
 function prNumber(prUrl: string | null): number | null {
@@ -51,7 +57,7 @@ export class DispatchDaemon {
     const backlog = this.repo.resumeIncomplete().reverse();
     let driven = 0;
     for (const dispatch of backlog) {
-      if (dispatch.state === "escalated" || dispatch.state === "amending") continue;
+      if (dispatch.state === "escalated") continue; // parked — awaiting an external rewake
       try {
         await this.step(dispatch);
       } catch (err) {
@@ -86,10 +92,14 @@ export class DispatchDaemon {
       case "building": // resume: the build was interrupted — re-run it
         await this.build(dispatch.id);
         return;
-      case "review": // resume: the PR exists, re-run the review
+      case "review": // resume: the PR exists, re-enter the review/amend cycle
         await this.review(dispatch.id);
         return;
-      default: // amending (#34), escalated (parked), done/failed (terminal) — nothing
+      case "amending": // resume: an amend was interrupted — re-review and continue the cycle
+        this.repo.transition(dispatch.id, "review");
+        await this.review(dispatch.id);
+        return;
+      default: // escalated (parked), done/failed (terminal) — nothing to drive
         return;
     }
   }
@@ -114,18 +124,50 @@ export class DispatchDaemon {
     await this.review(id, result.branch);
   }
 
-  // Run the review leg and mark the dispatch ready (done). The amend cycle (#34) will
-  // insert review → amending here when the review raises blocking findings.
+  // The review → amend cycle (ADR 0008): review; if clean, ready (done); if blocking,
+  // amend and re-review, up to the cap; on cap-exceeded, escalate (parked). A nit-only
+  // review is `clean` and does not burn a round (the reviewer ranks severity).
   private async review(id: string, branch?: string): Promise<void> {
-    const dispatch = this.require(id);
-    const pr = prNumber(dispatch.prUrl);
-    if (pr === null) throw new Error(`dispatch ${id} is in review with no PR url`);
+    while (true) {
+      const dispatch = this.require(id);
+      const pr = prNumber(dispatch.prUrl);
+      if (pr === null) throw new Error(`dispatch ${id} is in review with no PR url`);
+      const target: ReviewTarget = { pr, branch: branch ?? dispatch.branch };
 
-    const target: ReviewTarget = { pr, branch: branch ?? dispatch.branch };
-    const result = await this.legs.review(target, this.config);
-    this.repo.setSessions(id, { reviewSessionId: result.reviewSessionId });
-    this.repo.setCost(id, "review", estimateCost(result.route, result.tokens.input, result.tokens.output));
-    this.repo.transition(id, "done");
+      const result = await this.legs.review(target, this.config);
+      this.repo.setSessions(id, { reviewSessionId: result.reviewSessionId });
+      this.repo.setCost(id, "review", estimateCost(result.route, result.tokens.input, result.tokens.output));
+
+      if (result.verdict === "clean") {
+        this.repo.transition(id, "done");
+        return;
+      }
+      if (dispatch.amendRounds >= this.config.amendCap) {
+        // Cap exceeded — not a retry-harder signal but an under-decomposition one
+        // (ADR 0008). Park as re-decompose, to be rewoken on resolution.
+        this.repo.escalate(id, "re-decompose");
+        return;
+      }
+      this.repo.transition(id, "amending");
+      const amended = await this.amend(id, target, result.review);
+      if (!amended) {
+        // The builder couldn't change anything against the findings — re-reviewing
+        // identical code would just burn rounds. It's stuck; escalate now.
+        this.repo.escalate(id, "re-decompose");
+        return;
+      }
+      this.repo.transition(id, "review");
+    }
+  }
+
+  // One amend round: re-run the builder against the findings, record the round + cost.
+  // Returns whether the amend actually changed anything.
+  private async amend(id: string, target: ReviewTarget, findings: string): Promise<boolean> {
+    const result = await this.legs.amend(target, findings, this.config);
+    this.repo.setRoute(id, result.route);
+    this.repo.setCost(id, "amend", estimateCost(result.route, result.tokens.input, result.tokens.output));
+    this.repo.incrementAmendRound(id);
+    return result.changed;
   }
 
   // Mark a dispatch failed (if the graph allows it from its current state) and log the

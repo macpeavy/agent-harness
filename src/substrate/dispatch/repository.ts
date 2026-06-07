@@ -160,15 +160,22 @@ export class DispatchRepository {
   }
 
   /**
-   * Record per-leg cost. build/review overwrite that leg; amend accumulates across
-   * rounds via an in-place add (a dispatch amends more than once). The cost ledger.
+   * Add to a leg's cost (in-place, so it's race-free). Every leg accumulates: the amend
+   * cycle re-reviews and re-amends, so review and amend each run more than once; build
+   * runs once, so its accumulation is just the one value. The cost ledger.
    */
   setCost(id: string, leg: CostLeg, usd: number): void {
-    if (leg === "amend") {
-      this.patch(id, { amendCostUsd: sql`COALESCE(${dispatches.amendCostUsd}, 0) + ${usd}` });
-      return;
+    switch (leg) {
+      case "build":
+        this.patch(id, { buildCostUsd: sql`COALESCE(${dispatches.buildCostUsd}, 0) + ${usd}` });
+        return;
+      case "review":
+        this.patch(id, { reviewCostUsd: sql`COALESCE(${dispatches.reviewCostUsd}, 0) + ${usd}` });
+        return;
+      case "amend":
+        this.patch(id, { amendCostUsd: sql`COALESCE(${dispatches.amendCostUsd}, 0) + ${usd}` });
+        return;
     }
-    this.patch(id, leg === "build" ? { buildCostUsd: usd } : { reviewCostUsd: usd });
   }
 
   /** Increment the amend-round counter (the decomposition-quality readout). */

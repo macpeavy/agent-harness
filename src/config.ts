@@ -20,6 +20,15 @@ export interface SubstrateConfig {
   builderAgent: string;
   /** OpenCode agent that runs reviews (strong route). Doubles as the cost-route key. */
   reviewerAgent: string;
+  /** Max amend rounds before a dispatch escalates (ADR 0008). Default 3. */
+  amendCap: number;
+}
+
+// A positive integer from env, or the fallback (a malformed value doesn't silently
+// become NaN and break the cap comparison).
+function intFromEnv(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
 /**
@@ -50,5 +59,6 @@ export async function loadConfig(): Promise<SubstrateConfig> {
     worktreeRoot: process.env.AH_WORKTREE_ROOT ?? join(tmpdir(), "ah-worktrees"),
     builderAgent: process.env.AH_BUILDER_AGENT ?? "builder",
     reviewerAgent: process.env.AH_REVIEWER_AGENT ?? "reviewer",
+    amendCap: intFromEnv(process.env.AH_AMEND_CAP, 3),
   };
 }

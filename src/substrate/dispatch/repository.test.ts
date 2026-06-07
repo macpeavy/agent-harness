@@ -183,17 +183,18 @@ describe("the instrument columns", () => {
     expect(repo.get("d1")?.amendRounds).toBe(2);
   });
 
-  it("splits cost per leg, accumulating amend cost across rounds", () => {
+  it("accumulates cost per leg across passes (the amend cycle re-reviews and re-amends)", () => {
     repo.create(SEED);
     repo.setCost("d1", "build", 0.004);
-    repo.setCost("d1", "review", 0.074);
+    repo.setCost("d1", "review", 0.074); // initial review
+    repo.setCost("d1", "review", 0.01); //  re-review after an amend
     repo.setCost("d1", "amend", 0.005);
     repo.setCost("d1", "amend", 0.006);
 
     const d = repo.get("d1");
     expect(d?.buildCostUsd).toBeCloseTo(0.004, 6);
-    expect(d?.reviewCostUsd).toBeCloseTo(0.074, 6);
-    expect(d?.amendCostUsd).toBeCloseTo(0.011, 6);
+    expect(d?.reviewCostUsd).toBeCloseTo(0.084, 6); // 0.074 + 0.01
+    expect(d?.amendCostUsd).toBeCloseTo(0.011, 6); //  0.005 + 0.006
   });
 
   it("makes the instrument fields queryable for the cheap-able-fraction readout", () => {

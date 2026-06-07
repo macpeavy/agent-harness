@@ -39,8 +39,15 @@ Each amend round, the cap, and any escalation are recorded on the dispatch (ADR 
 - **Unbounded amend until clean.** Risks an injectable cheap model thrashing, and masks under-decomposition as cost. The cap + escalation is the controlled form.
 - **Promote straight to a strong builder on any heavy work.** Forfeits the cost win on exactly the build-heavy bulk the thesis depends on. Promotion is the escalation, not the default.
 
+## Implementation notes (AGENT-20)
+
+- **Severity is drawn from a structured reviewer verdict.** The reviewer (`agents/reviewer.md`) ends its output with a mandatory `VERDICT: blocking | clean` line — `blocking` iff there is a blocker/major finding; minor-only is `clean` and does not burn a round. The substrate parses the last such line (`parseVerdict`); an absent/unparseable verdict defaults to `blocking` (never auto-ship a review we couldn't classify). This resolves the "how blocking-vs-nonblocking is drawn" question below.
+- **Escalation records `re-decompose`** (the ladder's first rung) and parks the dispatch (`escalated` is non-terminal, ADR 0009) for an external rewake — there is no planner yet to act on it (ADR 0010), so a human resolves it for now.
+- **Two escalation triggers:** the cap is exceeded while still blocking, *or* an amend changes nothing (the builder is stuck — re-reviewing identical code would only burn rounds).
+- The cycle lives in the daemon (the service orchestrator); the amend leg (`src/dispatch/legs/amend.ts`) does one round (re-run the builder on the findings, push to the same branch). Per-leg cost accumulates across re-reviews/re-amends.
+
 ## Open questions
 
 - The cap default (3) and whether it should vary by chunk size/route — tuned under real load (P4).
-- How blocking-vs-nonblocking severity is drawn, and whether nonblocking nits are auto-filed as follow-ups rather than amended in-line.
-- Whether re-decompose or tier-promote should be the first escalation rung for a given failure shape — measured, not assumed.
+- Whether nonblocking nits are auto-filed as follow-ups rather than dropped.
+- Whether re-decompose or tier-promote should be the first escalation rung for a given failure shape — measured, not assumed (re-decompose is the current default).
