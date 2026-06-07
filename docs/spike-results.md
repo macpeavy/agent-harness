@@ -58,8 +58,28 @@ Target ≤ $2.80/PR (≈ $250 / 90 PRs). Actual **$0.078/PR — ~36× under**, �
 
 ---
 
-## Spike verdict — THESIS PROVEN · 2026-06-07
+## Heavy-work cost test — SQLite dispatch registry (REG-1) · 2026-06-07
 
-Per `scope/final.md`'s decision rule: **G1 ✓, G3 (mergeability + cost) ✓, G4 ✓** (G2 routing held throughout). The dispatch → build → PR → token-free-wake → review loop runs end-to-end on an open stack (OpenCode + LiteLLM + OpenRouter): a cheap model writes mergeable, tested code; a strong model reviews; total ≈ $0.08/PR. **Both drivers delivered — lock-in escaped (open harness) and cost cut far below target. → Greenlight the full port.**
+The earlier G3 runs (#23 requireEnv, #26 parseRoutes) were trivial — a few lines each. They proved the loop and cheap-model-on-toy-work, **not** the reasoning-heavy work that drives real spend. So a deliberately heavier issue was run: a SQLite-backed dispatch registry (`bun:sqlite`, a 5-state machine with validated transitions + transactions, session-id linking, idempotent `resumeIncomplete`, ~8 methods) **plus** its own test suite — PR #28.
 
-Remaining spike items are parallel and non-thesis-gating: **G5** (Linear MCP path, AGENT-2) and **G6** (remote attach, AGENT-5). The security envelope (ADR 0007 / AGENT-11–16) gates unattended operation + deployment, not the thesis.
+**Build (deepseek):** 47,090 in / 5,120 out tokens (4× the util's output — real work). A strong first draft: correct core, transactions on `transition()`, prepared statements, the layering honored (links OpenCode session ids, no duplication), typecheck clean, and a **13-test suite the builder wrote, passing 13/0**. It added WAL mode unprompted — the exact concurrency property that motivated SQLite over JSON.
+
+**Review (sonnet):** 6 ranked findings, including **two High** — a real `setSessions` atomicity gap (two UPDATEs with no wrapping transaction) and the hardcoded non-terminal-state list — plus a missing `close()`, a test-db collision risk, and two test nits. Sharper than the human reviewer's read.
+
+**Cost:** build $0.0057 + review $0.0841 = **$0.090/PR** — ~31× under the $2.80 target, even for a substantial multi-file build.
+
+**The honest read:** the cheap model produces a *strong first draft* of heavy work — correct, tested, typechecked — but **not one-shot-mergeable**, unlike the trivial utils. It needs the strong reviewer + an **amend cycle** to close the real gaps. That makes the review→amend loop (AGENT-8 Option B, deferred) **load-bearing for heavy work, not optional** — and even budgeting 2–3 amend rounds at ~$0.09 each, cost-per-PR stays under ~$0.30, still an order of magnitude under target.
+
+---
+
+## Spike verdict — 2026-06-07 (calibrated; supersedes the earlier "thesis proven" line)
+
+Mechanism and cost are proven; the quality story is honest and conditional.
+
+- **Lock-in escaped** ✓ — the full dispatch → build → PR → token-free-wake → review loop runs on an open stack (OpenCode + LiteLLM + OpenRouter). G1, G2, G4 hold.
+- **Cost supported for light *and* heavy work** ✓ — ~$0.08/PR (light) to ~$0.09/PR (a multi-file SQLite state machine), under ~$0.30/PR even with amend rounds, vs the $2.80 budget. The bill is dominated by the strong *reviewer* (~$0.08), not the cheap builder (~$0.005).
+- **Quality is conditional** — light work is one-shot-mergeable; heavy work is a strong first draft that **requires the strong reviewer + amend cycle** to reach mergeable. The cheap-build / strong-review / amend architecture is necessary and — the key finding — affordable.
+
+**Limits of the evidence (not yet proven):** one heavy build of a *patterned* task (a CRUD + state-machine class, well-trodden for a coding model). The hardest classes — cross-codebase debugging, architecturally-ambiguous features, novel algorithms — are untested and may need a stronger build tier; chief/ADR-tier reasoning runs the strong model by design (no cheap-build saving there). So: **greenlight the port, with the amend cycle treated as load-bearing and the strong tier reserved for ambiguous/architectural work.** The headline ($250 → ~$7/mo) is directionally real for the build-heavy bulk; the exact blended figure depends on the cheap-able fraction, which the port measures under real load.
+
+Remaining spike items (parallel, non-gating): **G5** (Linear MCP, AGENT-2), **G6** (remote attach, AGENT-5). Security envelope (ADR 0007 / AGENT-11–16) gates unattended operation + deployment.
