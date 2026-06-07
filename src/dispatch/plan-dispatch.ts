@@ -12,7 +12,19 @@
 
 import { dispatchBranch } from "./legs/build";
 import { DispatchRepository, type DispatchState } from "../substrate/dispatch";
-import { PlanRepository, type Chunk, type ChunkOutcome } from "../substrate/plan";
+import { CHUNK_OUTCOMES, PlanRepository, type Chunk, type ChunkOutcome } from "../substrate/plan";
+
+/** What a single materialised dispatch records back to the caller. */
+export interface MaterialisedDispatch {
+  chunkId: string;
+  dispatchId: string;
+}
+
+/** What flowing one outcome back records to the caller. */
+export interface FlowedOutcome {
+  chunkId: string;
+  outcome: ChunkOutcome;
+}
 
 /**
  * Assemble a dispatch's build-spec from a chunk's ADR 0014 spec fields. Pure — the
@@ -32,33 +44,15 @@ export function specFromChunk(c: Chunk): string {
 }
 
 /**
- * Map a dispatch's state to the outcome that flows back onto its chunk, or null if the
- * dispatch hasn't reached a flow-back point yet. `escalated` is parked (non-terminal in
- * the dispatch graph) but it IS a chunk outcome — the chief re-decomposes or tier-promotes.
+ * The outcome a dispatch flows back onto its chunk, or null if it hasn't reached one yet.
+ * A chunk's outcomes (done / escalated / failed) are exactly the dispatch states that are
+ * also outcomes, so they pass through by name; the in-flight states (queued / building /
+ * review / amending) flow back as null. Not a bare `return state` — DispatchState is the
+ * wider union, and this narrows it to ChunkOutcome via the shared outcome set (so the two
+ * can't silently drift apart).
  */
 export function outcomeFor(state: DispatchState): ChunkOutcome | null {
-  switch (state) {
-    case "done":
-      return "done";
-    case "escalated":
-      return "escalated";
-    case "failed":
-      return "failed";
-    default:
-      return null; // queued / building / review / amending — still in flight
-  }
-}
-
-/** What a single materialised dispatch records back to the caller. */
-export interface MaterialisedDispatch {
-  chunkId: string;
-  dispatchId: string;
-}
-
-/** What flowing one outcome back records to the caller. */
-export interface FlowedOutcome {
-  chunkId: string;
-  outcome: ChunkOutcome;
+  return (CHUNK_OUTCOMES as readonly string[]).includes(state) ? (state as ChunkOutcome) : null;
 }
 
 export class PlanDispatchService {
