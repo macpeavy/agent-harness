@@ -22,9 +22,11 @@ import {
 import {
   CHUNK_OUTCOMES,
   PlanRepository,
+  validateDag,
   type Chunk,
   type ChunkOutcome,
   type ChunkState,
+  type CreateDecomposition,
   type FeatureState,
 } from "../substrate/plan";
 
@@ -64,6 +66,13 @@ export interface FeatureStatus {
   escalations: ParkedEscalation[];
 }
 
+/** What a `decompose` records back to the caller. */
+export interface Decomposed {
+  featureId: string;
+  chunkIds: string[];
+  edgeCount: number;
+}
+
 /**
  * Assemble a dispatch's build-spec from a chunk's ADR 0014 spec fields. Pure — the
  * builder works from this text; the structured curation (surface, skills) rides the
@@ -98,6 +107,28 @@ export class PlanDispatchService {
     private readonly plan: PlanRepository,
     private readonly dispatch: DispatchRepository,
   ) {}
+
+  /**
+   * Write a feature's chunk-DAG to the plan (the chief's `decompose`, ADR 0019): the
+   * feature, its chunks (each a full ADR 0014 spec), and the dependency edges — in one
+   * transaction, so a feature never half-lands. The DAG is validated up front (unknown
+   * refs, self-edges, cycles → a clear error before any write). Plan-only; nothing
+   * dispatches until the owner approves the feature and `dispatchReady` runs.
+   */
+  decompose(input: CreateDecomposition): Decomposed {
+    const violation = validateDag(
+      input.chunks.map((c) => c.id),
+      input.edges,
+    );
+    if (violation) throw new Error(`invalid chunk-DAG: ${violation}`);
+
+    this.plan.createDecomposition(input);
+    return {
+      featureId: input.feature.id,
+      chunkIds: input.chunks.map((c) => c.id),
+      edgeCount: input.edges.length,
+    };
+  }
 
   /**
    * Materialise every ready chunk of an owner-approved feature as a dispatch: create the

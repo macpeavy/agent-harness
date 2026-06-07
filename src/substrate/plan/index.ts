@@ -3,7 +3,7 @@
 // data access) stays behind this barrel.
 
 export { PlanRepository } from "./repository";
-export type { CreateFeature, CreateChunk } from "./repository";
+export type { CreateFeature, CreateChunk, CreateDecomposition } from "./repository";
 
 export {
   FEATURE_STATES,
@@ -13,7 +13,9 @@ export {
   TIER_HINTS,
   CHUNK_OUTCOMES,
   isChunkTerminal,
+  validateDag,
 } from "./model";
+export type { DagEdge } from "./model";
 export type {
   Feature,
   NewFeature,

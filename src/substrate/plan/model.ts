@@ -45,3 +45,54 @@ export type ChunkOutcome = (typeof CHUNK_OUTCOMES)[number];
 export function isChunkTerminal(state: ChunkState): boolean {
   return CHUNK_TRANSITIONS[state].length === 0;
 }
+
+/** A dependency edge in a proposed chunk-DAG (`to` depends on `from`). */
+export interface DagEdge {
+  from: string;
+  to: string;
+}
+
+/**
+ * Validate a whole proposed chunk-DAG up front (the chief's `decompose` writes the lot at
+ * once, ADR 0019). Pure — no I/O; the repository's batch write assumes a valid DAG and the
+ * FK/unique constraints are the backstop. Returns the first violation as a message, or null
+ * if the DAG is sound. Checks: unique chunk ids, no self-edge, every edge endpoint is a
+ * known chunk, no duplicate edge, and acyclicity (Kahn's algorithm).
+ */
+export function validateDag(chunkIds: readonly string[], edges: readonly DagEdge[]): string | null {
+  const ids = new Set<string>();
+  for (const id of chunkIds) {
+    if (ids.has(id)) return `duplicate chunk id ${id}`;
+    ids.add(id);
+  }
+
+  const seenEdge = new Set<string>();
+  const indegree = new Map<string, number>(chunkIds.map((id) => [id, 0]));
+  const succ = new Map<string, string[]>();
+  for (const e of edges) {
+    if (e.from === e.to) return `self-edge on chunk ${e.from}`;
+    if (!ids.has(e.from)) return `edge references unknown chunk ${e.from}`;
+    if (!ids.has(e.to)) return `edge references unknown chunk ${e.to}`;
+    const key = `${e.from}->${e.to}`;
+    if (seenEdge.has(key)) return `duplicate edge ${key}`;
+    seenEdge.add(key);
+    indegree.set(e.to, (indegree.get(e.to) ?? 0) + 1);
+    succ.set(e.from, [...(succ.get(e.from) ?? []), e.to]);
+  }
+
+  // Kahn's: peel roots (indegree 0); if any node never peels, it's in a cycle.
+  const queue = [...indegree].filter(([, d]) => d === 0).map(([id]) => id);
+  let peeled = 0;
+  while (queue.length > 0) {
+    const node = queue.shift() as string;
+    peeled++;
+    for (const next of succ.get(node) ?? []) {
+      const d = (indegree.get(next) ?? 0) - 1;
+      indegree.set(next, d);
+      if (d === 0) queue.push(next);
+    }
+  }
+  if (peeled < ids.size) return "the chunk-DAG has a cycle";
+
+  return null;
+}

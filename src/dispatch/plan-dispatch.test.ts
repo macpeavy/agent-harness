@@ -279,3 +279,35 @@ describe("status", () => {
     expect(s.chunks[0]?.dispatchState).toBe("escalated");
   });
 });
+
+describe("decompose", () => {
+  it("writes a feature's chunk-DAG to the plan and returns a summary", () => {
+    const result = service.decompose({
+      feature: FEATURE,
+      chunks: [chunk("a"), chunk("b")],
+      edges: [{ from: "a", to: "b" }],
+    });
+
+    expect(result).toEqual({ featureId: "F1", chunkIds: ["a", "b"], edgeCount: 1 });
+    expect(service.status("F1").feature.state).toBe("planning"); // not yet approved
+    expect(plan.listChunks("F1").map((c) => c.id)).toEqual(["a", "b"]);
+    expect(plan.readyChunks("F1").map((c) => c.id)).toEqual(["a"]); // edge a→b in effect
+  });
+
+  it("rejects a cyclic DAG before writing anything", () => {
+    expect(() =>
+      service.decompose({
+        feature: FEATURE,
+        chunks: [chunk("a"), chunk("b")],
+        edges: [{ from: "a", to: "b" }, { from: "b", to: "a" }],
+      }),
+    ).toThrow("invalid chunk-DAG");
+    expect(plan.getFeature("F1")).toBeNull(); // nothing landed
+  });
+
+  it("rejects an edge to an unknown chunk", () => {
+    expect(() =>
+      service.decompose({ feature: FEATURE, chunks: [chunk("a")], edges: [{ from: "a", to: "ghost" }] }),
+    ).toThrow("invalid chunk-DAG");
+  });
+});

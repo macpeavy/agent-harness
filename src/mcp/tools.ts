@@ -6,7 +6,19 @@
 // through (settles ADR 0012's MCP-vs-native question).
 
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { FeatureStatus, PlanDispatchService, MaterialisedDispatch } from "../dispatch/plan-dispatch";
+import type { Decomposed, FeatureStatus, PlanDispatchService, MaterialisedDispatch } from "../dispatch/plan-dispatch";
+import type { CreateChunk, CreateDecomposition, CreateFeature } from "../substrate/plan";
+
+/**
+ * The `decompose` tool's input — the chief gives the feature once and each chunk's spec
+ * without repeating featureId (the handler stamps it). Mirrors CreateDecomposition minus
+ * that redundancy.
+ */
+export interface DecomposeInput {
+  feature: CreateFeature;
+  chunks: Omit<CreateChunk, "featureId">[];
+  edges: { from: string; to: string }[];
+}
 
 // A plain-text tool result. The chief reads text, so the handlers render a readable digest
 // rather than a JSON blob.
@@ -62,6 +74,27 @@ export function renderDispatched(made: MaterialisedDispatch[], featureId: string
   const lines = [`Dispatched ${made.length} ready chunk(s) for feature ${featureId}:`];
   for (const m of made) lines.push(`  chunk ${m.chunkId} → dispatch ${m.dispatchId}`);
   return lines.join("\n");
+}
+
+/** Render the result of a decompose call. */
+export function renderDecomposed(d: Decomposed): string {
+  return (
+    `Decomposed feature ${d.featureId} into ${d.chunkIds.length} chunk(s) ` +
+    `(${d.edgeCount} edge(s)): ${d.chunkIds.join(", ")}.\n` +
+    `Awaiting owner approval — nothing dispatches until the feature is approved.`
+  );
+}
+
+/** `decompose` — write a feature's chunk-DAG to the plan (validated; plan-only). */
+export function runDecompose(service: PlanDispatchService, input: DecomposeInput): CallToolResult {
+  return guard(() => {
+    const decomposition: CreateDecomposition = {
+      feature: input.feature,
+      chunks: input.chunks.map((c) => ({ ...c, featureId: input.feature.id })),
+      edges: input.edges,
+    };
+    return text(renderDecomposed(service.decompose(decomposition)));
+  });
 }
 
 /** `status` — a read-only digest of a feature's plan + dispatch progress. */

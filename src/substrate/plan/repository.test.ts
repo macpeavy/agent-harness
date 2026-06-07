@@ -167,3 +167,29 @@ describe("the dispatch seam (service binds the two repos)", () => {
     expect(plan.getChunk("b")?.state).toBe("escalated");
   });
 });
+
+describe("createDecomposition (transactional batch)", () => {
+  it("writes the feature, chunks, and edges in one shot", () => {
+    plan.createDecomposition({
+      feature: FEATURE,
+      chunks: [chunk("a"), chunk("b")],
+      edges: [{ from: "a", to: "b" }],
+    });
+
+    expect(plan.getFeature("F1")?.state).toBe("planning");
+    expect(plan.listChunks("F1").map((c) => c.id)).toEqual(["a", "b"]);
+    expect(plan.getChunk("a")?.contract).toBe("export function a(): void");
+    // The edge landed: b depends on a, so only a is ready.
+    expect(plan.readyChunks("F1").map((c) => c.id)).toEqual(["a"]);
+  });
+
+  it("rolls back the whole batch on a failure mid-write (atomic)", () => {
+    // Two chunks share an id → the second insert hits the PK and the transaction aborts.
+    expect(() =>
+      plan.createDecomposition({ feature: FEATURE, chunks: [chunk("a"), chunk("a")], edges: [] }),
+    ).toThrow();
+    // Nothing landed — not even the feature inserted before the failing chunk.
+    expect(plan.getFeature("F1")).toBeNull();
+    expect(plan.listChunks("F1")).toEqual([]);
+  });
+});
