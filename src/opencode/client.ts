@@ -37,6 +37,12 @@ export class OpencodeClient {
     return res.json();
   }
 
+  private async get(path: string): Promise<unknown> {
+    const res = await fetch(`${this.baseUrl}${path}`);
+    if (!res.ok) throw new Error(`GET ${path} → ${res.status} ${await res.text()}`);
+    return res.json();
+  }
+
   /** Create a session; returns its id (`ses_...`). */
   async createSession(opts: CreateSessionOpts = {}): Promise<string> {
     const s = (await this.post("/session", opts)) as { id?: string };
@@ -76,5 +82,70 @@ export class OpencodeClient {
       },
       serverMs: created && completed ? completed - created : 0,
     };
+  }
+
+  /** Fire a prompt without waiting — the token-free wake. Returns 204, no body. */
+  async promptAsync(sessionID: string, text: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/session/${sessionID}/prompt_async`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parts: [{ type: "text", text }] }),
+    });
+    if (!res.ok) throw new Error(`prompt_async → ${res.status} ${await res.text()}`);
+  }
+
+  /**
+   * Poll until the session goes idle (its latest assistant message has finished),
+   * then return that reply. This is *external* idle detection — the substrate waits,
+   * not the agent, so no tokens are burned while idle (`/api/.../wait` is not yet
+   * implemented server-side; `/event` SSE is the future cleaner path).
+   */
+  async waitForReply(
+    sessionID: string,
+    opts: { timeoutMs?: number; intervalMs?: number } = {},
+  ): Promise<AssistantReply> {
+    const timeoutMs = opts.timeoutMs ?? 180_000;
+    const intervalMs = opts.intervalMs ?? 1500;
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      const msgs = (await this.get(`/session/${sessionID}/message`)) as Array<{
+        info?: {
+          role?: string;
+          finish?: string;
+          modelID?: string;
+          providerID?: string;
+          tokens?: { input?: number; output?: number; total?: number };
+          time?: { created?: number; completed?: number };
+        };
+        parts?: Array<{ type: string; text?: string }>;
+      }>;
+      const assistants = (msgs ?? []).filter((m) => m.info?.role === "assistant");
+      const last = assistants[assistants.length - 1];
+      if (last?.info?.finish) {
+        const info = last.info;
+        const text = (last.parts ?? [])
+          .filter((p) => p.type === "text")
+          .map((p) => p.text ?? "")
+          .join("")
+          .trim();
+        const created = info.time?.created;
+        const completed = info.time?.completed;
+        return {
+          text,
+          modelID: info.modelID ?? "?",
+          providerID: info.providerID ?? "?",
+          finish: info.finish ?? "?",
+          tokens: {
+            input: info.tokens?.input ?? 0,
+            output: info.tokens?.output ?? 0,
+            total: info.tokens?.total ?? 0,
+          },
+          serverMs: created && completed ? completed - created : 0,
+        };
+      }
+      await Bun.sleep(intervalMs);
+    }
+    throw new Error(`waitForReply: session ${sessionID} did not idle within ${timeoutMs}ms`);
   }
 }
