@@ -5,7 +5,7 @@ builder especially, which has less judgment than a strong model and leans on the
 being explicit. Read this before writing code; it ships in every chunk's context pack.
 
 `CLAUDE.md` orients (what the project is, the phase, where things go). This file is the
-detailed standard. The `.claude/skills/` directory operationalizes the recurring
+detailed standard. The `docs/skills/` directory operationalizes the recurring
 "how do I add X" operations; reach for the matching skill when you add a surface.
 
 ## Language & runtime
