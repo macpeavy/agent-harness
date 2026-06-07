@@ -1,8 +1,8 @@
-// The dispatch domain contract — the state machine and the published types every
-// consumer imports (the loop daemon AGENT-19, the amend leg AGENT-20). ADR 0009
-// (registry) / ADR 0008 (amend cycle). This file is the contract; the persistence
-// shape lives in ./schema, and the row type is re-exported here so a consumer needs
-// one import for "what a dispatch is and how its state moves".
+// The dispatch domain (the engine layer) — the state machine and the published types.
+// Pure logic and types: no I/O, no ORM imports. The repository and the service layer
+// build on this. ADR 0009 (registry) / ADR 0008 (amend cycle). The persistence shape
+// lives in ./schema; its row type is re-exported here so the model is one import for
+// "what a dispatch is and how its state moves".
 
 export type { Dispatch, NewDispatch } from "./schema";
 

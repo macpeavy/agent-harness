@@ -33,15 +33,36 @@ The substrate (`src/`) is organized by responsibility, one concern per directory
 src/
   index.ts            # entrypoint / CLI for the substrate
   opencode/           # typed client + thin wrappers over the OpenCode REST API
-  dispatch/           # issue → branch → build/review/amend legs, the loop
+  dispatch/           # issue → branch → build/review/amend legs (the service layer)
   wake/               # idle detection + prompt_async wake driver
   github/             # gh/git plumbing, PR creation, the merge gate
-  substrate/          # the dispatch registry (bun:sqlite) and shared state
+  substrate/          # durable state + domain, organized by context (see below)
+    dispatch/         #   the dispatch context: model (engine) + schema + repository
   util/               # small, dependency-free, single-purpose helpers
 ```
 
 (This resolves ADR 0003's open module-boundary question; extend the shape as the
 substrate grows, but keep the by-responsibility split.)
+
+### Layering — the substrate is a layered backend
+
+Persistent-state code follows the **engine / repository / service / router** split,
+named explicitly. A bounded *context* (the dispatch context is the first) owns its
+layers in one directory under `substrate/`, with an `index.ts` as its public surface.
+`substrate/` holds contexts; it is not itself a context.
+
+- **engine / domain** (`substrate/dispatch/model.ts`) — pure logic and types: the state
+  machine, the transition graph. No I/O, no ORM imports.
+- **persistence** (`substrate/dispatch/schema.ts`) — the Drizzle table, schema as code.
+- **repository** (`substrate/dispatch/repository.ts`) — the *only* layer that touches the
+  database. Returns domain objects, owns transactions. The dispatch registry (ADR 0009)
+  is realized as `DispatchRepository`.
+- **service** (the loop daemon, the amend cycle — `src/dispatch/`) — orchestration:
+  consumes repositories + the OpenCode adapter, holds no SQL.
+- **router** — thin entry (CLI / daemon bootstrap, later HTTP).
+
+The rule a service-layer change must hold: **SQL lives only in a repository.** A leg or
+the loop calls `repository.transition(...)`, never a query builder.
 
 - **One responsibility per module.** A file does one job and says so in its top comment.
 - **One file per chunk.** A unit of build work targets a single file (the natural chunk
@@ -52,8 +73,8 @@ substrate grows, but keep the by-responsibility split.)
 - **Imports are relative within `src/`** (`../opencode/client`), no path aliases.
 - **Published contracts get their own file; one-off types stay co-located.** A type that
   is the shared contract between modules — the dispatch domain model and state machine
-  consumed by the loop and the amend leg — lives in its own file (`src/substrate/dispatch.ts`)
-  that consumers import. A type used only by its own module (a function's option bag, a
+  consumed by the loop and the amend leg — lives in its own file (`substrate/dispatch/model.ts`)
+  that consumers import (via the context's `index.ts`). A type used only by its own module (a function's option bag, a
   local result shape) stays at the top of that module. Same instinct as helpers: shared
   surface earns a file, local surface doesn't.
 
@@ -107,9 +128,10 @@ substrate grows, but keep the by-responsibility split.)
 Durable state goes through **Drizzle ORM over `bun:sqlite`** (ADR 0016). See the
 `persistence-drizzle` skill for the full pattern; the rules:
 
-- **Schema as code is the source of truth.** Define tables in `src/substrate/schema.ts`
-  with camelCase TS keys mapped to snake_case columns, so the inferred `InferSelectModel`
-  type *is* the domain model — no row→object mapper, no `as` cast.
+- **Schema as code is the source of truth.** Define tables in the context's `schema.ts`
+  (`substrate/dispatch/schema.ts`) with camelCase TS keys mapped to snake_case columns, so
+  the inferred `InferSelectModel` type *is* the domain model — no row→object mapper, no `as`
+  cast. The **repository** is the only layer that imports the schema or the query builder.
 - **No hand-written SQL strings.** Reads and writes go through Drizzle's typed query
   builder. The only allowed `sql` fragments are for things SQLite exposes but the schema
   doesn't model — an in-place increment, a `rowid` tiebreak — and even then values are

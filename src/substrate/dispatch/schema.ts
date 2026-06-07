@@ -1,14 +1,14 @@
 // The dispatch table — the schema source of truth (Drizzle, ADR 0016).
 //
 // drizzle-kit generates migrations from this file (`bun run db:generate`); the
-// registry applies them at startup. Column names are snake_case in SQLite while the
+// repository applies them at startup. Column names are snake_case in SQLite while the
 // TS keys are camelCase, so Drizzle's inferred row type IS the camelCase Dispatch
 // model directly — no hand-written boundary mapper (the spike cast raw rows; the
 // typed-boundary problem is dissolved by the ORM, not papered over).
 
 import type { InferInsertModel, InferSelectModel } from "drizzle-orm";
 import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { DISPATCH_STATES, ESCALATIONS } from "./dispatch";
+import { DISPATCH_STATES, ESCALATIONS } from "./model";
 
 export const dispatches = sqliteTable("dispatches", {
   id: text("id").primaryKey(),

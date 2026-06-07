@@ -10,10 +10,13 @@ the substrate must survive a restart with. Pairs **ADR 0009** (the registry sits
 OpenCode's session store: it links session ids, it does not duplicate session/message
 data) and **ADR 0016** (Drizzle is the data layer; no hand-written SQL).
 
-**Files:** a schema (`src/substrate/schema.ts`), the domain contract + state machine
-(`src/substrate/dispatch.ts`), the store module (`src/substrate/registry.ts`), its
-co-located test, and the generated migrations (`drizzle/`, committed). The db file lives
-under `.substrate/` (gitignored, inside the sandbox volume).
+**Files** (a context owns its layers in one directory under `substrate/`): the schema
+(`substrate/dispatch/schema.ts` — persistence), the domain contract + state machine
+(`substrate/dispatch/model.ts` — engine), the repository (`substrate/dispatch/repository.ts`
+— the only layer that touches the db), its co-located test, an `index.ts` public surface,
+and the generated migrations (`drizzle/`, committed). The db file lives under `.substrate/`
+(gitignored, inside the sandbox volume). See `docs/standards.md` § Module organization for
+the engine/repository/service/router layering.
 
 ## How
 
@@ -48,10 +51,10 @@ under `.substrate/` (gitignored, inside the sandbox volume).
 ## Worked example (shape)
 
 ```ts
-// schema.ts — the source of truth
+// schema.ts — the source of truth (persistence layer)
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import type { InferSelectModel } from "drizzle-orm";
-import { STATES } from "./dispatch";
+import { STATES } from "./model";
 
 export const dispatches = sqliteTable("dispatches", {
   id: text("id").primaryKey(),
@@ -61,13 +64,13 @@ export const dispatches = sqliteTable("dispatches", {
 });
 export type Dispatch = InferSelectModel<typeof dispatches>; // the domain model, camelCase
 
-// registry.ts — typed query builder + migrate at startup
+// repository.ts — the data-access layer: typed query builder + migrate at startup
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { eq } from "drizzle-orm";
 import { dispatches } from "./schema";
-import { TRANSITIONS } from "./dispatch";
+import { TRANSITIONS } from "./model";
 
 const sqlite = new Database(path);
 sqlite.run("PRAGMA journal_mode = WAL");
