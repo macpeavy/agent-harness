@@ -83,10 +83,22 @@ harness-native auto-discovered skills.**
 - **Inject the whole library every build.** Rejected — needless tokens on an
   already-token-heavy build; tight per-chunk curation is the point.
 
+## Implementation notes (AGENT-21)
+
+- **Injection format:** a context section is prepended to the build prompt — `docs/standards.md`
+  then each curated skill, `---`-separated, ahead of the issue (`src/dispatch/context-pack.ts`
+  → `buildContextPack`, pushed by `src/dispatch/legs/build.ts`'s `buildPrompt`). The build
+  leg reads the docs from the repo and injects their content, so the guarantee holds
+  regardless of the model reading pointers.
+- **Curation is rule-based by default, reasoned-override-ready.** `skillsForSurface` maps the
+  chunk's surface → skills (writing-tests always; persistence-drizzle for schema/db,
+  typed-api-boundary for opencode, adding-a-substrate-module for any src module). The
+  chief's per-chunk reasoned curation rides over it via an explicit `skills` list. With no
+  surface (the current daemon path, pre-plan-wiring), the pack is standards + writing-tests.
+- **Pending:** the chunk's `surface`/`skills` flow into the build only once the plan→dispatch
+  wiring carries them (the next slice); until then the default pack ships on every build.
+
 ## Open questions
 
-- The exact injection format (system-prompt block vs. a structured context section in
-  the build prompt) and the token budget per pack — settled with the P2 context-pack
-  assembly (AGENT-21) against the shakedown's cost shape (~$0.10–0.35/PR).
-- Whether the chief's curation is rule-based (surface → skills map) or reasoned per
-  chunk — decided with the decomposition engine.
+- The token budget per pack as the library grows — tuned against the shakedown's cost
+  shape (~$0.10–0.35/PR); curate tightly (inject the load-bearing pieces, not everything).

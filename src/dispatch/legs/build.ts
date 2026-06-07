@@ -10,6 +10,7 @@ import { $ } from "bun";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { runAgent } from "../../opencode/agent-runner";
+import { buildContextPack } from "../context-pack";
 import { removeWorktree } from "./worktree";
 import type { SubstrateConfig } from "../../config";
 
@@ -17,6 +18,25 @@ export interface Issue {
   id: string;
   title: string;
   body: string;
+  /** The chunk's one file — drives the default context-pack skills (ADR 0018). */
+  surface?: string;
+  /** Explicit context-pack skills (the chief's per-chunk curation), if any. */
+  skills?: string[];
+}
+
+/**
+ * The build prompt: the load-bearing context pack (ADR 0018, pushed) followed by the
+ * issue. Pure so it's testable without dispatching the agent.
+ */
+export function buildPrompt(issue: Issue, contextPack: string): string {
+  const context = contextPack ? `${contextPack}\n\n---\n\n` : "";
+  return (
+    context +
+    `Implement the following issue by editing files in the current working directory. ` +
+    `Use your tools to make the change, then typecheck/test it. Do NOT run git or open a ` +
+    `pull request — the substrate handles version control for you.\n\n` +
+    `Issue ${issue.id}: ${issue.title}\n\n${issue.body}`
+  );
 }
 
 export interface BuildResult {
@@ -61,12 +81,11 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
   await $`bun install`.cwd(worktree).quiet();
 
   try {
-    // 2. Run the builder in the worktree (synchronous drive).
-    const prompt =
-      `Implement the following issue by editing files in the current working directory. ` +
-      `Use your tools to make the change, then typecheck/test it. Do NOT run git or open a ` +
-      `pull request — the substrate handles version control for you.\n\n` +
-      `Issue ${issue.id}: ${issue.title}\n\n${issue.body}`;
+    // 2. Run the builder in the worktree (synchronous drive). The load-bearing context
+    //    pack — standards + the chunk's skill(s) — is PUSHED into the prompt (ADR 0018),
+    //    not left to the model to read from a pointer.
+    const pack = buildContextPack({ repoPath: config.repoPath, surface: issue.surface, skills: issue.skills });
+    const prompt = buildPrompt(issue, pack);
     const run = await runAgent(worktree, {
       title: `build ${issue.id}`,
       agent: config.builderAgent,
