@@ -26,6 +26,8 @@ export interface BuildResult {
   changed: boolean;
   reply: string;
   prUrl?: string;
+  route: string;
+  tokens: { input: number; output: number };
 }
 
 const REPO = process.env.AH_REPO ?? "/home/claude-dev/Developer/agent-harness";
@@ -51,26 +53,30 @@ export async function runBuildLeg(issue: Issue): Promise<BuildResult> {
   // 1. Isolated worktree on a fresh branch off the latest origin/main.
   await $`git -C ${REPO} fetch origin main`.quiet();
   await $`git -C ${REPO} worktree add ${worktree} -b ${branch} origin/main`.quiet();
+  // Install deps so the builder can typecheck/test its own work in-worktree.
+  await $`bun install`.cwd(worktree).quiet();
 
   // 2. Dispatch the builder over HTTP (serve bound to the worktree).
   const serve = await startServe(worktree);
   let reply = "";
+  let tokens = { input: 0, output: 0 };
   try {
     const client = new OpencodeClient(serve.baseUrl);
     const sessionID = await client.createSession({ title: `build ${issue.id}`, agent: "builder" });
     const prompt =
       `Implement the following issue by editing files in the current working directory. ` +
-      `Use your tools to make the change. Do NOT run git or open a pull request — the ` +
-      `substrate handles version control for you.\n\n` +
+      `Use your tools to make the change, then typecheck/test it. Do NOT run git or open a ` +
+      `pull request — the substrate handles version control for you.\n\n` +
       `Issue ${issue.id}: ${issue.title}\n\n${issue.body}`;
     reply = (await client.sendMessage(sessionID, prompt)).text;
+    tokens = await client.sessionTokens(sessionID);
   } finally {
     serve.stop();
   }
 
   // 3. Did the builder actually change anything?
   const status = (await $`git -C ${worktree} status --porcelain`.text()).trim();
-  if (!status) return { branch, worktree, changed: false, reply };
+  if (!status) return { branch, worktree, changed: false, reply, route: "builder", tokens };
 
   // 4. Substrate owns git + GitHub.
   const commitMsg = `feat: ${issue.title} (${issue.id})`;
@@ -84,7 +90,7 @@ export async function runBuildLeg(issue: Issue): Promise<BuildResult> {
     await $`gh pr create --repo ${GH_REPO} --head ${branch} --base main --title ${commitMsg} --body ${prBody}`.text()
   ).trim();
 
-  return { branch, worktree, changed: true, reply, prUrl };
+  return { branch, worktree, changed: true, reply, prUrl, route: "builder", tokens };
 }
 
 if (import.meta.main) {

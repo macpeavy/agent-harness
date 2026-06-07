@@ -22,6 +22,8 @@ export interface ReviewResult {
   branch: string;
   review: string;
   waitedMs: number;
+  route: string;
+  tokens: { input: number; output: number };
 }
 
 const REPO = process.env.AH_REPO ?? "/home/claude-dev/Developer/agent-harness";
@@ -38,6 +40,7 @@ export async function runReviewLeg(target: ReviewTarget): Promise<ReviewResult> 
   const serve = await startServe(worktree, 4098);
   let review = "";
   let waitedMs = 0;
+  let tokens = { input: 0, output: 0 };
   try {
     const client = new OpencodeClient(serve.baseUrl);
     const sessionID = await client.createSession({ title: `review PR #${target.pr}`, agent: "reviewer" });
@@ -50,6 +53,7 @@ export async function runReviewLeg(target: ReviewTarget): Promise<ReviewResult> 
     await client.promptAsync(sessionID, prompt);
     review = (await client.waitForReply(sessionID)).text;
     waitedMs = Date.now() - start;
+    tokens = await client.sessionTokens(sessionID);
   } finally {
     serve.stop();
   }
@@ -58,7 +62,7 @@ export async function runReviewLeg(target: ReviewTarget): Promise<ReviewResult> 
   const body = `**Automated review — reviewer route, dispatched via the token-free wake (AGENT-8):**\n\n${review}`;
   await $`gh pr comment ${target.pr} --repo ${GH_REPO} --body ${body}`.quiet();
 
-  return { pr: target.pr, branch: target.branch, review, waitedMs };
+  return { pr: target.pr, branch: target.branch, review, waitedMs, route: "reviewer", tokens };
 }
 
 if (import.meta.main) {
