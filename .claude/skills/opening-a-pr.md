@@ -36,7 +36,7 @@ const commitMsg = `feat: ${issue.title} (${issue.id})`;
 await $`git -C ${worktree} add -A`.quiet();
 await $`git -C ${worktree} commit -q -m ${commitMsg}`;
 await $`git -C ${worktree} push -u origin ${branch}`.quiet();
-const prUrl = (await $`gh pr create --repo ${GH_REPO} --head ${branch} \
+const prUrl = (await $`gh pr create --repo ${config.ghRepo} --head ${branch} \
   --base main --title ${commitMsg} --body ${prBody}`.text()).trim();
 ```
 

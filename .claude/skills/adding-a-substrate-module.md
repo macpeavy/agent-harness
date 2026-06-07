@@ -47,16 +47,19 @@ with an `index.ts` public surface; services import that surface, not the inner f
 
 ## Worked example
 
-A new leg `src/dispatch/amend-leg.ts` (the build→review→amend loop, ADR 0008):
+A new leg `src/dispatch/legs/amend.ts` (the build→review→amend loop, ADR 0008). A leg is
+the *service* layer: it runs an agent via the shared `runAgent` runner and takes config —
+it holds no SQL (the daemon persists transitions via the repository).
 
 ```ts
-// AGENT-20 — amend leg.
+// The amend leg (service layer) — close the build→review→amend loop.
 //
-// Given a review with blocking findings, re-dispatch the builder with the findings
-// as the amend prompt, re-review, repeat to a clean review or the cap. Grows from
-// review-leg.ts; the substrate owns the loop, the registry records each round.
+// Given a review with blocking findings, re-run the builder with the findings as the
+// amend prompt, re-review, repeat to a clean review or the cap, then escalate. Sits
+// beside the build/review legs; the daemon records each round via the repository.
 
-import { OpencodeClient } from "../opencode/client";
+import { runAgent } from "../../opencode/agent-runner";
+import type { SubstrateConfig } from "../../config";
 
 export interface AmendResult {
   rounds: number;
@@ -65,12 +68,11 @@ export interface AmendResult {
   tokens: { input: number; output: number };
 }
 
-const AMEND_CAP = Number(process.env.AH_AMEND_CAP ?? "3");
-
-export async function runAmendLeg(/* ... */): Promise<AmendResult> {
-  // ... cap-bounded loop; throw with context on a failed dispatch; record each round
+export async function runAmendLeg(/* target, */ config: SubstrateConfig): Promise<AmendResult> {
+  // ... cap-bounded loop; runAgent(worktree, { agent: config.builderAgent, prompt, mode: "sync" });
+  //     throw with context on a failed dispatch; return rounds/clean/escalation
 }
 ```
 
 Note the shape: top comment with lineage, `interface` for the result, explicit return
-type, config via `process.env.X ?? default`, the cap as a named constant.
+type, config passed in (not read from `process.env`), the runner doing the agent work.
