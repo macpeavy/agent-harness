@@ -13,7 +13,16 @@ import { dirname, join } from "node:path";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { chunks, edges, features, type Chunk, type Feature } from "./schema";
+import {
+  chunks,
+  edges,
+  features,
+  type Chunk,
+  type Feature,
+  type NewChunk,
+  type NewEdge,
+  type NewFeature,
+} from "./schema";
 import {
   CHUNK_TRANSITIONS,
   FEATURE_TRANSITIONS,
@@ -44,10 +53,46 @@ export interface CreateChunk {
   tierHint?: TierHint;
 }
 
+/** A whole chunk-DAG the chief authored in one `decompose` pass (ADR 0019). */
+export interface CreateDecomposition {
+  feature: CreateFeature;
+  chunks: CreateChunk[];
+  edges: { from: string; to: string }[];
+}
+
 // The shared substrate db (dispatch + plan are sibling tables in it) and the committed
 // migration set, resolved relative to this file so the path holds regardless of cwd.
 const DEFAULT_DB_PATH = ".substrate/substrate.db";
 const MIGRATIONS_DIR = join(import.meta.dir, "../../../drizzle");
+
+// Row builders — one source of truth for each table's insert shape and defaults, shared by
+// the singular inserts (createFeature/addChunk/addEdge) and the batch (createDecomposition),
+// so the two paths can't drift.
+function featureValues(rec: CreateFeature, now: number): NewFeature {
+  return { id: rec.id, title: rec.title, description: rec.description, state: "planning", createdAt: now, updatedAt: now };
+}
+
+function chunkValues(rec: CreateChunk, now: number): NewChunk {
+  return {
+    id: rec.id,
+    featureId: rec.featureId,
+    surface: rec.surface,
+    intent: rec.intent,
+    contract: rec.contract,
+    acceptance: rec.acceptance,
+    dataShapes: rec.dataShapes ?? null,
+    preResolved: rec.preResolved ?? null,
+    outOfScope: rec.outOfScope ?? null,
+    tierHint: rec.tierHint ?? "cheap",
+    state: "planned",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function edgeValues(featureId: string, from: string, to: string, now: number): NewEdge {
+  return { id: `${from}->${to}`, featureId, fromChunkId: from, toChunkId: to, createdAt: now };
+}
 
 export class PlanRepository {
   private sqlite: Database;
@@ -69,11 +114,23 @@ export class PlanRepository {
 
   /** Open a new feature in state 'planning'. */
   createFeature(rec: CreateFeature): void {
+    this.db.insert(features).values(featureValues(rec, Date.now())).run();
+  }
+
+  /**
+   * Write a whole chunk-DAG (feature + chunks + dependency edges) in one transaction — the
+   * chief's `decompose` output (ADR 0019), so a feature never half-lands. Assumes a
+   * pre-validated DAG (the service runs `validateDag`); the FK/unique constraints are the
+   * backstop. Throws (rolling back) if any id collides or an FK is unmet.
+   */
+  createDecomposition(input: CreateDecomposition): void {
     const now = Date.now();
-    this.db
-      .insert(features)
-      .values({ id: rec.id, title: rec.title, description: rec.description, state: "planning", createdAt: now, updatedAt: now })
-      .run();
+    this.db.transaction((tx) => {
+      tx.insert(features).values(featureValues(input.feature, now)).run();
+      for (const c of input.chunks) tx.insert(chunks).values(chunkValues(c, now)).run();
+      for (const e of input.edges)
+        tx.insert(edges).values(edgeValues(input.feature.id, e.from, e.to, now)).run();
+    });
   }
 
   getFeature(id: string): Feature | null {
@@ -95,25 +152,7 @@ export class PlanRepository {
 
   /** Add a chunk to a feature in state 'planned'. The feature FK is enforced. */
   addChunk(rec: CreateChunk): void {
-    const now = Date.now();
-    this.db
-      .insert(chunks)
-      .values({
-        id: rec.id,
-        featureId: rec.featureId,
-        surface: rec.surface,
-        intent: rec.intent,
-        contract: rec.contract,
-        acceptance: rec.acceptance,
-        dataShapes: rec.dataShapes ?? null,
-        preResolved: rec.preResolved ?? null,
-        outOfScope: rec.outOfScope ?? null,
-        tierHint: rec.tierHint ?? "cheap",
-        state: "planned",
-        createdAt: now,
-        updatedAt: now,
-      })
-      .run();
+    this.db.insert(chunks).values(chunkValues(rec, Date.now())).run();
   }
 
   getChunk(id: string): Chunk | null {
@@ -172,16 +211,7 @@ export class PlanRepository {
     if (fromChunkId === toChunkId) throw new Error(`addEdge: self-edge on chunk ${fromChunkId}`);
     if (this.reaches(featureId, toChunkId, fromChunkId))
       throw new Error(`addEdge: ${fromChunkId} → ${toChunkId} would create a cycle`);
-    this.db
-      .insert(edges)
-      .values({
-        id: `${fromChunkId}->${toChunkId}`,
-        featureId,
-        fromChunkId,
-        toChunkId,
-        createdAt: Date.now(),
-      })
-      .run();
+    this.db.insert(edges).values(edgeValues(featureId, fromChunkId, toChunkId, Date.now())).run();
   }
 
   /** Close the underlying db handle. */

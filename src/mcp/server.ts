@@ -11,7 +11,21 @@ import { z } from "zod";
 import { PlanRepository } from "../substrate/plan";
 import { DispatchRepository } from "../substrate/dispatch";
 import { PlanDispatchService } from "../dispatch/plan-dispatch";
-import { runStatus, runDispatch } from "./tools";
+import { runStatus, runDispatch, runDecompose } from "./tools";
+
+// The chunk spec the chief authors per chunk (ADR 0014). featureId is omitted — the handler
+// stamps it from the feature, so the chief doesn't repeat it per chunk.
+const chunkSpec = z.object({
+  id: z.string().describe("unique chunk id (becomes the dispatch/branch id)"),
+  surface: z.string().describe("the one file this chunk produces"),
+  intent: z.string().describe("one sentence: what this chunk is for"),
+  contract: z.string().describe("the exact signatures/types/exports it must produce"),
+  acceptance: z.string().describe("acceptance criteria, including a test file"),
+  dataShapes: z.string().optional().describe("data shapes the chunk works with"),
+  preResolved: z.string().optional().describe("design decisions pre-resolved to avoid amends"),
+  outOfScope: z.string().optional().describe("what this chunk must NOT do"),
+  tierHint: z.enum(["cheap", "strong"]).optional().describe("build tier (default cheap)"),
+});
 
 /**
  * Build the substrate MCP server over a given service — pure construction, so a test can
@@ -19,6 +33,32 @@ import { runStatus, runDispatch } from "./tools";
  */
 export function createSubstrateServer(service: PlanDispatchService): McpServer {
   const server = new McpServer({ name: "substrate", version: "0.1.0" });
+
+  server.registerTool(
+    "decompose",
+    {
+      title: "Decompose a feature",
+      description:
+        "Write a feature's chunk-DAG to the plan: the feature, its chunks (each a full " +
+        "ADR 0014 spec — one file, contract, acceptance, pre-resolved decisions), and the " +
+        "dependency edges (`to` depends on `from`; precursors built first). Validated for " +
+        "cycles/unknown refs. Plan-only — nothing dispatches until the owner approves.",
+      inputSchema: {
+        feature: z
+          .object({
+            id: z.string().describe("unique feature id"),
+            title: z.string().describe("short feature title"),
+            description: z.string().describe("the owner's intent"),
+          })
+          .describe("the feature being decomposed"),
+        chunks: z.array(chunkSpec).describe("the chunks (one file each)"),
+        edges: z
+          .array(z.object({ from: z.string(), to: z.string() }))
+          .describe("dependency edges — `to` depends on `from`"),
+      },
+    },
+    async (input) => runDecompose(service, input),
+  );
 
   server.registerTool(
     "status",
@@ -48,8 +88,11 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
 }
 
 if (import.meta.main) {
-  const plan = new PlanRepository();
-  const dispatch = new DispatchRepository();
+  // SUBSTRATE_DB overrides the default shared-db path — lets a smoke test point the booted
+  // subprocess at a temp db instead of the repo's real one. Both repos open the same file.
+  const dbPath = process.env.SUBSTRATE_DB;
+  const plan = dbPath ? new PlanRepository(dbPath) : new PlanRepository();
+  const dispatch = dbPath ? new DispatchRepository(dbPath) : new DispatchRepository();
   const service = new PlanDispatchService(plan, dispatch);
   const server = createSubstrateServer(service);
   await server.connect(new StdioServerTransport());
