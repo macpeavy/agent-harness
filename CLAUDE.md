@@ -21,6 +21,11 @@ We are proving a thesis, not shipping the full system. Scope is deliberately one
 - **Personas are config, not code.** Builder/reviewer/etc. are OpenCode agent definitions (markdown/JSON) with a `model:` route and a `permission:` set. Permissions are **last-match-wins** in OpenCode (the inverse of Claude Code) — author allowlists accordingly.
 - **GitHub is the build/review surface.** Linear is the product roadmap; a two-way sync mirrors the two. Don't write Linear from build code.
 
+## Coding standards & skills
+
+- **`docs/standards.md`** — the detailed coding standard every change follows (language, module organization, typed boundaries, error handling, testing, secrets, commits). Read it before writing code; it ships in every build chunk's context pack. This file orients; `standards.md` is the rulebook.
+- **`.claude/skills/`** — operational guides for the recurring "how do I add X" surfaces: `adding-a-substrate-module`, `typed-api-boundary`, `persistence-bun-sqlite`, `adding-a-persona`, `adding-a-model-route`, `writing-tests`, `opening-a-pr`. Load the matching skill when you add that kind of surface. Index: `.claude/skills/README.md`.
+
 ## Where things go
 
 - `src/` — the substrate (TypeScript). See `src/README.md`.
