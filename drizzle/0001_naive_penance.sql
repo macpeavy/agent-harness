@@ -1,1 +1,0 @@
-ALTER TABLE `dispatches` ADD `spec` text;

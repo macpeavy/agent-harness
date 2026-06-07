@@ -18,8 +18,9 @@ export const dispatches = sqliteTable("dispatches", {
   // The build spec — the issue body the builder works from. The substrate owns the
   // chunk spec (it survives a restart, so resumeIncomplete can re-build), since a
   // planner-generated chunk isn't always backed by a tracker issue (ADR 0009/0010).
-  // Nullable in the column for migration safety; create() always sets it.
-  spec: text("spec"),
+  // NOT NULL: a dispatch with no spec has nothing to build — the domain forbids it
+  // (CreateDispatch.spec is required), and the column enforces the same.
+  spec: text("spec").notNull(),
   state: text("state", { enum: DISPATCH_STATES }).notNull().default("queued"),
   // Linked OpenCode session ids — the registry links them, it does not own the
   // sessions or duplicate their data (ADR 0009, above-OpenCode layering).
