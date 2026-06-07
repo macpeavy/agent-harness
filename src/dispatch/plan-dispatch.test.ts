@@ -220,3 +220,62 @@ describe("re-dispatch after escalation", () => {
     expect(() => service.dispatchReady("F1")).toThrow("re-dispatch");
   });
 });
+
+describe("status", () => {
+  it("throws for an unknown feature", () => {
+    expect(() => service.status("nope")).toThrow("no feature");
+  });
+
+  it("digests a fresh feature: chunks 'planned', no dispatches, zeroed readout", () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    plan.addChunk(chunk("b"));
+
+    const s = service.status("F1");
+
+    expect(s.feature).toEqual({ id: "F1", title: "A feature", state: "planning" });
+    expect(s.chunks).toHaveLength(2);
+    expect(s.chunks[0]).toMatchObject({ id: "a", surface: "src/a.ts", state: "planned", dispatchId: null, dispatchState: null });
+    expect(s.escalations).toEqual([]);
+    expect(s.readout.total).toBe(0);
+  });
+
+  it("joins each chunk to its dispatch state and computes the readout over the feature's dispatches", () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    plan.addChunk(chunk("b"));
+    plan.addChunk(chunk("c"));
+    plan.transitionFeature("F1", "ready");
+    service.dispatchReady("F1");
+
+    driveTo("a", "done");
+    dispatch.transition("b", "building"); // b in flight
+    // c left queued
+
+    const s = service.status("F1");
+
+    expect(s.feature.state).toBe("building");
+    const byId = Object.fromEntries(s.chunks.map((c) => [c.id, c]));
+    expect(byId.a).toMatchObject({ state: "dispatched", dispatchState: "done" }); // chunk state not yet reaped
+    expect(byId.b?.dispatchState).toBe("building");
+    expect(byId.c?.dispatchState).toBe("queued");
+    // Readout is over the 3 dispatches: 1 done, 2 in-flight.
+    expect(s.readout.total).toBe(3);
+    expect(s.readout.reachedReady).toBe(1);
+    expect(s.readout.inFlight).toBe(2);
+  });
+
+  it("surfaces parked escalations with their kind for routing", () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    plan.transitionFeature("F1", "ready");
+    service.dispatchReady("F1");
+
+    driveTo("a", "escalated"); // escalate("re-decompose") under the hood
+
+    const s = service.status("F1");
+
+    expect(s.escalations).toEqual([{ chunkId: "a", dispatchId: "a", kind: "re-decompose" }]);
+    expect(s.chunks[0]?.dispatchState).toBe("escalated");
+  });
+});

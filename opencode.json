@@ -30,6 +30,13 @@
   },
   "model": "litellm/builder",
   "share": "disabled",
+  "mcp": {
+    "substrate": {
+      "type": "local",
+      "command": ["bun", "run", "src/mcp/server.ts"],
+      "enabled": true
+    }
+  },
   "permission": {
     "edit": "allow",
     "webfetch": "deny",
