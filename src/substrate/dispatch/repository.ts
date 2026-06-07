@@ -57,7 +57,9 @@ type DispatchUpdate = SQLiteUpdateSetSource<typeof dispatches>;
 
 // --- repository configuration ---
 
-const DEFAULT_DB_PATH = ".substrate/dispatches.db";
+// The shared substrate db — the dispatch + plan contexts are sibling tables in it,
+// so cross-context links (chunks.dispatch_id → dispatches.id) are real FKs (ADR 0017/0019).
+const DEFAULT_DB_PATH = ".substrate/substrate.db";
 
 // Migrations are committed source (drizzle/), resolved relative to this file so the
 // path holds regardless of the process's working directory.
