@@ -25,6 +25,7 @@ export interface BuildResult {
   reply: string;
   prUrl?: string;
   route: string;
+  buildSessionId: string;
   tokens: { input: number; output: number };
 }
 
@@ -36,9 +37,15 @@ function slugify(s: string): string {
     .slice(0, 40);
 }
 
+/** The branch a dispatch builds on — deterministic from the issue, so the enqueuer and
+ *  the build leg agree (the review leg reviews the branch the registry recorded). */
+export function dispatchBranch(issue: Issue): string {
+  return `agent/${issue.id.toLowerCase()}-${slugify(issue.title)}`;
+}
+
 export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promise<BuildResult> {
   const id = issue.id.toLowerCase();
-  const branch = `agent/${id}-${slugify(issue.title)}`;
+  const branch = dispatchBranch(issue);
   mkdirSync(config.worktreeRoot, { recursive: true });
   const worktree = join(config.worktreeRoot, `build-${id}`);
 
@@ -74,6 +81,7 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
       changed: false,
       reply: run.reply,
       route: config.builderAgent,
+      buildSessionId: run.sessionId,
       tokens: run.tokens,
     };
   }
@@ -97,6 +105,7 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
     reply: run.reply,
     prUrl,
     route: config.builderAgent,
+    buildSessionId: run.sessionId,
     tokens: run.tokens,
   };
 }
