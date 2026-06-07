@@ -47,8 +47,8 @@ substrate grows, but keep the by-responsibility split.)
 ### Layering — the substrate is a layered backend
 
 Persistent-state code follows the **engine / repository / service / router** split,
-named explicitly. A bounded *context* (the dispatch context is the first) owns its
-layers in one directory under `substrate/`, with an `index.ts` as its public surface.
+named explicitly (ADR 0017). A bounded *context* (the dispatch context is the first) owns
+its layers in one directory under `substrate/`, with an `index.ts` as its public surface.
 `substrate/` holds contexts; it is not itself a context.
 
 - **engine / domain** (`substrate/dispatch/model.ts`) — pure logic and types: the state
