@@ -17,7 +17,7 @@ A **`bun:sqlite` dispatch registry** owned by the substrate, sitting **above** O
 - **State machine:** `queued → building → review → amending → done`, with `building`/`review`/`amending` able to go to `escalated` (cap exceeded, ADR 0008) or `failed`. Transitions are validated against the allowed graph and rejected if illegal; the transition + `updated_at` write is wrapped in a transaction. (The spike's atomicity finding is a design requirement here, not an afterthought.)
 - **Crash recovery:** `resumeIncomplete()` returns dispatches in non-terminal states so the daemon (P1) can resume after a restart.
 - **The measurement instrument:** each dispatch additionally records `route` (which model built it), `amend_rounds`, `escalated` (and to what — re-decompose / tier-promote / attended), and `cost_usd` per leg. Over a corpus this yields the cheap-able fraction, the amend-round distribution, and the blended cost-per-PR — the P4 readouts.
-- **Prepared statements** throughout; the db path defaults under `.orchestrator/` and is treated as containable state (it lives inside the sandbox volume — ADR 0007).
+- **Prepared statements** throughout; the db path defaults under `.substrate/` (the substrate's own runtime-state dir, mirroring `src/substrate/`) and is treated as containable state (it lives inside the sandbox volume — ADR 0007).
 
 ## Consequences
 

@@ -11,14 +11,15 @@ substrate must survive a restart with. Pairs with **ADR 0009** (the registry sit
 session/message data).
 
 **Files:** the store module under `src/substrate/` (e.g. `registry.ts`) + its co-located
-test. The db file lives under `.orchestrator/` (gitignored, inside the sandbox volume).
+test. The db file lives under `.substrate/` (the substrate's runtime-state dir, gitignored,
+inside the sandbox volume).
 
 ## How
 
 1. **Use `bun:sqlite` — no external deps, no server, no ORM.** `import { Database }
    from "bun:sqlite"`.
 2. **Create the schema if absent** in the constructor; open the db from a path arg
-   (default under `.orchestrator/`). Enable WAL mode for concurrent reads (a status
+   (default under `.substrate/`). Enable WAL mode for concurrent reads (a status
    surface reads while the loop writes).
 3. **Prepared statements** for every query (`db.query(...)`), reused — not string-built SQL.
 4. **Wrap any multi-statement mutation in a transaction** (`db.transaction(...)`). A
@@ -42,7 +43,7 @@ const TRANSITIONS: Record<string, string[]> = {
 
 export class DispatchRegistry {
   private db: Database;
-  constructor(path = ".orchestrator/dispatches.db") {
+  constructor(path = ".substrate/dispatches.db") {
     this.db = new Database(path);
     this.db.run("PRAGMA journal_mode = WAL");
     this.db.run(`CREATE TABLE IF NOT EXISTS dispatches (...)`);
