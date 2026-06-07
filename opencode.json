@@ -10,12 +10,12 @@
       },
       "models": {
         "builder": {
-          "name": "builder — qwen3-coder-30b (cheap)",
-          "limit": { "context": 160000, "output": 32000 }
+          "name": "builder — deepseek-v4-flash (cheap, reasoning; native tool-calling)",
+          "limit": { "context": 1000000, "output": 64000 }
         },
         "builder-alt": {
-          "name": "builder-alt — deepseek-v4-flash (cheap, reasoning)",
-          "limit": { "context": 1000000, "output": 64000 }
+          "name": "builder-alt — qwen3-coder-30b (cheaper; no native tool-calling, ref only)",
+          "limit": { "context": 160000, "output": 32000 }
         },
         "reviewer": {
           "name": "reviewer — claude-sonnet-4.6 (strong)",
@@ -106,7 +106,7 @@
   "agent": {
     "builder": {
       "description": "Implements one scoped feature end-to-end on the cheap route, opens a PR.",
-      "mode": "subagent",
+      "mode": "all",
       "model": "litellm/builder",
       "prompt": "{file:./agents/builder.md}",
       "permission": {
@@ -116,7 +116,7 @@
     },
     "reviewer": {
       "description": "Reviews a PR/diff on the strong route; read-only, returns ranked findings.",
-      "mode": "subagent",
+      "mode": "all",
       "model": "litellm/reviewer",
       "prompt": "{file:./agents/reviewer.md}",
       "permission": {
