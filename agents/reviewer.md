@@ -30,7 +30,7 @@ Ranked findings (blocker > major > minor), each with file:line, the concern, why
 - `VERDICT: blocking` — at least one **blocker or major** finding (something that must change before merge).
 - `VERDICT: clean` — no blocker/major findings. Minor nits may remain; they don't block and must not burn an amend round.
 
-The verdict is mandatory and drives the amend cycle (ADR 0008): `blocking` triggers another build→review round up to the cap; `clean` makes the PR ready. Rank honestly — a nit marked blocking wastes a round; a real blocker marked clean ships a bad change.
+The verdict is **mandatory and must be the literal last line** — never omit it, never reword it. The substrate parses exactly `VERDICT: blocking` or `VERDICT: clean`; a reply without that line is treated as `blocking` and forces a wasted amend round on what may be clean work. It drives the amend cycle (ADR 0008): `blocking` triggers another build→review round up to the cap; `clean` makes the PR ready. Rank honestly — a nit marked blocking wastes a round; a real blocker marked clean ships a bad change.
 
 ## Read-only
 

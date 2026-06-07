@@ -59,10 +59,18 @@ export async function runReviewLeg(
   await $`git -C ${config.repoPath} worktree add --detach ${worktree} origin/${target.branch}`.quiet();
 
   try {
-    // Run the reviewer over the token-free wake.
+    // Run the reviewer over the token-free wake. The verdict line is reinforced HERE,
+    // in the task prompt, not just in the persona — the substrate parses it to gate the
+    // amend cycle, and a model reliably follows an explicit task instruction where it
+    // drops a system-prompt detail (AGENT-26: Sonnet was omitting it, so a clean review
+    // with no verdict defaulted to `blocking` and amend-stormed).
     const prompt =
       `Review the changes on this branch against main. Run \`git diff origin/main...HEAD\` ` +
-      `to see the diff, then return ranked findings per your role. You are read-only — do not edit or commit.`;
+      `to see the diff, then return ranked findings per your role. You are read-only — do not edit or commit.\n\n` +
+      `Your reply MUST end with a final line that is exactly one of:\n` +
+      `  VERDICT: blocking   — there is at least one blocker or major finding that must change before merge\n` +
+      `  VERDICT: clean      — no blocker/major findings (minor nits are fine and must not block)\n` +
+      `This line is mandatory and parsed by the substrate to decide whether to amend; a missing verdict is treated as blocking.`;
     const run = await runAgent(worktree, {
       title: `review PR #${target.pr}`,
       agent: config.reviewerAgent,
