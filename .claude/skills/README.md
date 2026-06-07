@@ -9,7 +9,7 @@ builder leans on them more than a strong model would.
 |---|---|
 | `adding-a-substrate-module` | Adding a new `src/` module — a dispatch leg, wake driver, github helper, registry. |
 | `typed-api-boundary` | Calling a foreign JSON API (OpenCode server, GitHub) — safe typing without `any`. |
-| `persistence-bun-sqlite` | Adding durable state (the dispatch registry, any store). Pairs ADR 0009. |
+| `persistence-drizzle` | Adding durable state (the dispatch registry, any store) — Drizzle over bun:sqlite. Pairs ADR 0009 + 0016. |
 | `adding-a-persona` | Adding an OpenCode agent (chief, principal, a producer) — config, not code. Pairs ADR 0005/0010. |
 | `adding-a-model-route` | Wiring a model — a LiteLLM route + the matching `opencode.json` entry. Pairs ADR 0002. |
 | `writing-tests` | Tests for a module — `bun:test`, co-located, one behavior per case. |

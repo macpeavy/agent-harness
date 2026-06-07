@@ -2,6 +2,7 @@
 
 - **Status:** proposed
 - **Date:** 2026-06-07
+- **Superseded in part by:** 0016 — the persistence *mechanism* is now Drizzle over bun:sqlite, not raw `bun:sqlite`/no-ORM/no-deps. Every other decision below (above-OpenCode layering, the state machine, crash recovery, the instrument columns) stands.
 
 ## Context
 
@@ -11,7 +12,7 @@ A second need rides on the same surface. The thesis verdict (`docs/spike-results
 
 ## Decision
 
-A **`bun:sqlite` dispatch registry** owned by the substrate, sitting **above** OpenCode's own session store — it links session ids, it does not duplicate session or message data. No external dependency, no server (Bun's built-in SQLite).
+A dispatch registry owned by the substrate, sitting **above** OpenCode's own session store — it links session ids, it does not duplicate session or message data. Embedded, single-process, no server. (The mechanism was raw `bun:sqlite`; ADR 0016 now realizes it through Drizzle over that same `bun:sqlite` driver — the layering and contract below are unchanged.)
 
 - **Dispatch-level state, not session data.** Each row is a dispatch with its issue/chunk identity, branch, current state, the linked OpenCode `build`/`review` session ids, PR url, and cost. Session transcripts and messages stay in OpenCode's store, read through it when needed.
 - **State machine:** `queued → building → review → amending → done`, with `building`/`review`/`amending` able to go to `escalated` (cap exceeded, ADR 0008) or `failed`. Transitions are validated against the allowed graph and rejected if illegal; the transition + `updated_at` write is wrapped in a transaction. (The spike's atomicity finding is a design requirement here, not an afterthought.)

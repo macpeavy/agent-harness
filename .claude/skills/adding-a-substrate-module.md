@@ -21,7 +21,8 @@ co-located `*.test.ts`. Don't touch other modules unless the chunk says so.
 3. **Export types as `interface`, behavior as `function`/`class`**, every exported
    function with an explicit return type. Keep helpers local (not exported) until reused.
 4. **Fail loud** — throw `new Error(...)` with context at every boundary; no silent catches.
-5. **Use Bun built-ins** (`fetch`, `Bun.$`, `Bun.sleep`, `bun:sqlite`) over dependencies.
+5. **Use Bun built-ins** (`fetch`, `Bun.$`, `Bun.sleep`) over dependencies. For durable
+   state, the data layer is Drizzle — see the `persistence-drizzle` skill (ADR 0016).
 6. **Write the co-located test** (`writing-tests` skill). `bun test` and `bun run
    typecheck` must pass.
 

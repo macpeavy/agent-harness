@@ -21,6 +21,9 @@ detailed standard. The `.claude/skills/` directory operationalizes the recurring
 - **Prefer Bun built-ins over dependencies.** `fetch`, `Bun.sleep`, `Bun.$` (shell),
   `bun:sqlite`, `bun:test`, `import.meta.main` are all first-class. Add a dependency only
   when a built-in genuinely won't do; the substrate is deliberately near-dependency-free.
+  The **sanctioned exceptions** are the data layer — **Drizzle ORM** (`drizzle-orm` +
+  `drizzle-kit`), ADR 0016 — and a typed client generated from an OpenAPI spec. Reach for
+  a new dependency beyond these only with an ADR.
 
 ## Module organization
 
@@ -47,6 +50,12 @@ substrate grows, but keep the by-responsibility split.)
 - **Helpers stay local until reused.** A function used in one module is not exported
   (e.g. `slugify` in `dispatch/build-leg.ts`). Promote to `util/` only on the second use.
 - **Imports are relative within `src/`** (`../opencode/client`), no path aliases.
+- **Published contracts get their own file; one-off types stay co-located.** A type that
+  is the shared contract between modules — the dispatch domain model and state machine
+  consumed by the loop and the amend leg — lives in its own file (`src/substrate/dispatch.ts`)
+  that consumers import. A type used only by its own module (a function's option bag, a
+  local result shape) stays at the top of that module. Same instinct as helpers: shared
+  surface earns a file, local surface doesn't.
 
 ## Types & boundaries
 
@@ -58,7 +67,9 @@ substrate grows, but keep the by-responsibility split.)
   An external API (the OpenCode server) returns untyped JSON. Cast it to an inline
   shape with optional fields, then read with `?? <default>` so a missing field can't
   throw downstream. This is the load-bearing pattern in `opencode/client.ts`; see the
-  `typed-api-boundary` skill.
+  `typed-api-boundary` skill. **This is for foreign JSON (HTTP) only** — database rows are
+  *not* a cast boundary: Drizzle infers the row type from the schema, so a query returns
+  the typed model with no cast (see § Persistence).
 - **The substrate is the seed of the production system, not a POC.** Real modules,
   clear seams, typed boundaries. No disposable scripts.
 
@@ -90,6 +101,27 @@ substrate grows, but keep the by-responsibility split.)
 - **The wake is external.** Idle detection and re-activation live in the substrate
   (`waitForReply` polls; `promptAsync` fires), never inside an OpenCode plugin
   (ADR 0004). Don't try to drive the loop from inside the harness.
+
+## Persistence
+
+Durable state goes through **Drizzle ORM over `bun:sqlite`** (ADR 0016). See the
+`persistence-drizzle` skill for the full pattern; the rules:
+
+- **Schema as code is the source of truth.** Define tables in `src/substrate/schema.ts`
+  with camelCase TS keys mapped to snake_case columns, so the inferred `InferSelectModel`
+  type *is* the domain model — no row→object mapper, no `as` cast.
+- **No hand-written SQL strings.** Reads and writes go through Drizzle's typed query
+  builder. The only allowed `sql` fragments are for things SQLite exposes but the schema
+  doesn't model — an in-place increment, a `rowid` tiebreak — and even then values are
+  bound, never interpolated.
+- **Migrations are generated and committed.** `bun run db:generate` (drizzle-kit) emits
+  SQL into `drizzle/`; the store applies pending migrations at startup. A schema change
+  ships its generated migration in the same PR, reviewed as SQL.
+- **Transactions wrap every read-validate-write and multi-field write** (`db.transaction`).
+  A state-transition guard reads, validates against the graph, and writes as one atomic
+  unit. Enable WAL on the underlying handle for concurrent reads.
+- **The db lives under `.substrate/`** (gitignored, inside the sandbox volume — ADR 0007);
+  the registry sits *above* OpenCode's session store and never duplicates session data.
 
 ## Testing
 
