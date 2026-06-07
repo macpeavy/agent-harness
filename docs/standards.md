@@ -36,8 +36,11 @@ src/
   dispatch/           # the service layer: the loop daemon + legs/ (build/review/amend)
   wake/               # idle detection + prompt_async wake driver
   github/             # gh/git plumbing, PR creation, the merge gate
-  substrate/          # durable state + domain, organized by context (see below)
+  substrate/          # durable state + domain, organized by context (see below); the
+                      #   contexts are sibling tables in one shared db (.substrate/substrate.db)
+                      #   so cross-context links are real FKs — independent repos, service binds
     dispatch/         #   the dispatch context: model (engine) + schema + repository
+    plan/             #   the plan context: features + chunk-DAG (ADR 0019), sibling to dispatch
   util/               # small, dependency-free, single-purpose helpers
 ```
 
