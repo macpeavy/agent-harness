@@ -21,6 +21,9 @@ detailed standard. The `.claude/skills/` directory operationalizes the recurring
 - **Prefer Bun built-ins over dependencies.** `fetch`, `Bun.sleep`, `Bun.$` (shell),
   `bun:sqlite`, `bun:test`, `import.meta.main` are all first-class. Add a dependency only
   when a built-in genuinely won't do; the substrate is deliberately near-dependency-free.
+  The **sanctioned exceptions** are the data layer — **Drizzle ORM** (`drizzle-orm` +
+  `drizzle-kit`), ADR 0016 — and a typed client generated from an OpenAPI spec. Reach for
+  a new dependency beyond these only with an ADR.
 
 ## Module organization
 
@@ -30,15 +33,36 @@ The substrate (`src/`) is organized by responsibility, one concern per directory
 src/
   index.ts            # entrypoint / CLI for the substrate
   opencode/           # typed client + thin wrappers over the OpenCode REST API
-  dispatch/           # issue → branch → build/review/amend legs, the loop
+  dispatch/           # issue → branch → build/review/amend legs (the service layer)
   wake/               # idle detection + prompt_async wake driver
   github/             # gh/git plumbing, PR creation, the merge gate
-  substrate/          # the dispatch registry (bun:sqlite) and shared state
+  substrate/          # durable state + domain, organized by context (see below)
+    dispatch/         #   the dispatch context: model (engine) + schema + repository
   util/               # small, dependency-free, single-purpose helpers
 ```
 
 (This resolves ADR 0003's open module-boundary question; extend the shape as the
 substrate grows, but keep the by-responsibility split.)
+
+### Layering — the substrate is a layered backend
+
+Persistent-state code follows the **engine / repository / service / router** split,
+named explicitly (ADR 0017). A bounded *context* (the dispatch context is the first) owns
+its layers in one directory under `substrate/`, with an `index.ts` as its public surface.
+`substrate/` holds contexts; it is not itself a context.
+
+- **engine / domain** (`substrate/dispatch/model.ts`) — pure logic and types: the state
+  machine, the transition graph. No I/O, no ORM imports.
+- **persistence** (`substrate/dispatch/schema.ts`) — the Drizzle table, schema as code.
+- **repository** (`substrate/dispatch/repository.ts`) — the *only* layer that touches the
+  database. Returns domain objects, owns transactions. The dispatch registry (ADR 0009)
+  is realized as `DispatchRepository`.
+- **service** (the loop daemon, the amend cycle — `src/dispatch/`) — orchestration:
+  consumes repositories + the OpenCode adapter, holds no SQL.
+- **router** — thin entry (CLI / daemon bootstrap, later HTTP).
+
+The rule a service-layer change must hold: **SQL lives only in a repository.** A leg or
+the loop calls `repository.transition(...)`, never a query builder.
 
 - **One responsibility per module.** A file does one job and says so in its top comment.
 - **One file per chunk.** A unit of build work targets a single file (the natural chunk
@@ -47,6 +71,12 @@ substrate grows, but keep the by-responsibility split.)
 - **Helpers stay local until reused.** A function used in one module is not exported
   (e.g. `slugify` in `dispatch/build-leg.ts`). Promote to `util/` only on the second use.
 - **Imports are relative within `src/`** (`../opencode/client`), no path aliases.
+- **Published contracts get their own file; one-off types stay co-located.** A type that
+  is the shared contract between modules — the dispatch domain model and state machine
+  consumed by the loop and the amend leg — lives in its own file (`substrate/dispatch/model.ts`)
+  that consumers import (via the context's `index.ts`). A type used only by its own module (a function's option bag, a
+  local result shape) stays at the top of that module. Same instinct as helpers: shared
+  surface earns a file, local surface doesn't.
 
 ## Types & boundaries
 
@@ -58,7 +88,9 @@ substrate grows, but keep the by-responsibility split.)
   An external API (the OpenCode server) returns untyped JSON. Cast it to an inline
   shape with optional fields, then read with `?? <default>` so a missing field can't
   throw downstream. This is the load-bearing pattern in `opencode/client.ts`; see the
-  `typed-api-boundary` skill.
+  `typed-api-boundary` skill. **This is for foreign JSON (HTTP) only** — database rows are
+  *not* a cast boundary: Drizzle infers the row type from the schema, so a query returns
+  the typed model with no cast (see § Persistence).
 - **The substrate is the seed of the production system, not a POC.** Real modules,
   clear seams, typed boundaries. No disposable scripts.
 
@@ -90,6 +122,28 @@ substrate grows, but keep the by-responsibility split.)
 - **The wake is external.** Idle detection and re-activation live in the substrate
   (`waitForReply` polls; `promptAsync` fires), never inside an OpenCode plugin
   (ADR 0004). Don't try to drive the loop from inside the harness.
+
+## Persistence
+
+Durable state goes through **Drizzle ORM over `bun:sqlite`** (ADR 0016). See the
+`persistence-drizzle` skill for the full pattern; the rules:
+
+- **Schema as code is the source of truth.** Define tables in the context's `schema.ts`
+  (`substrate/dispatch/schema.ts`) with camelCase TS keys mapped to snake_case columns, so
+  the inferred `InferSelectModel` type *is* the domain model — no row→object mapper, no `as`
+  cast. The **repository** is the only layer that imports the schema or the query builder.
+- **No hand-written SQL strings.** Reads and writes go through Drizzle's typed query
+  builder. The only allowed `sql` fragments are for things SQLite exposes but the schema
+  doesn't model — an in-place increment, a `rowid` tiebreak — and even then values are
+  bound, never interpolated.
+- **Migrations are generated and committed.** `bun run db:generate` (drizzle-kit) emits
+  SQL into `drizzle/`; the store applies pending migrations at startup. A schema change
+  ships its generated migration in the same PR, reviewed as SQL.
+- **Transactions wrap every read-validate-write and multi-field write** (`db.transaction`).
+  A state-transition guard reads, validates against the graph, and writes as one atomic
+  unit. Enable WAL on the underlying handle for concurrent reads.
+- **The db lives under `.substrate/`** (gitignored, inside the sandbox volume — ADR 0007);
+  the registry sits *above* OpenCode's session store and never duplicates session data.
 
 ## Testing
 

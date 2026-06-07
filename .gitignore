@@ -23,6 +23,9 @@ logs/
 *.db
 litellm.db
 
+# Substrate runtime state (dispatch registry db + WAL/SHM sidecars) — not committed
+.substrate/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -1,0 +1,51 @@
+// The dispatch domain (the engine layer) — the state machine and the published types.
+// Pure logic and types: no I/O, no ORM imports. The repository and the service layer
+// build on this. ADR 0009 (registry) / ADR 0008 (amend cycle). The persistence shape
+// lives in ./schema; its row type is re-exported here so the model is one import for
+// "what a dispatch is and how its state moves".
+
+export type { Dispatch, NewDispatch } from "./schema";
+
+/** A dispatch's lifecycle states (ADR 0009). Terminal states have no outgoing edges. */
+export const DISPATCH_STATES = [
+  "queued",
+  "building",
+  "review",
+  "amending",
+  "done",
+  "escalated",
+  "failed",
+] as const;
+export type DispatchState = (typeof DISPATCH_STATES)[number];
+
+/** The ADR 0008 escalation ladder — where a cap-exceeded dispatch was handed. */
+export const ESCALATIONS = ["re-decompose", "tier-promote", "attended"] as const;
+export type Escalation = (typeof ESCALATIONS)[number];
+
+/** The legs a dispatch's cost is split across (the instrument). */
+export const COST_LEGS = ["build", "review", "amend"] as const;
+export type CostLeg = (typeof COST_LEGS)[number];
+
+/**
+ * The allowed state graph (ADR 0009). A state whose array is empty is terminal —
+ * the terminal/non-terminal sets are DERIVED from this, never hardcoded.
+ */
+export const TRANSITIONS: Record<DispatchState, readonly DispatchState[]> = {
+  queued: ["building"],
+  building: ["review", "escalated", "failed"],
+  review: ["amending", "done", "escalated", "failed"],
+  amending: ["review", "escalated", "failed"],
+  done: [],
+  escalated: [],
+  failed: [],
+};
+
+/** A state is terminal when it has no outgoing transitions. */
+export function isTerminal(state: DispatchState): boolean {
+  return TRANSITIONS[state].length === 0;
+}
+
+/** The non-terminal states, derived from the transition graph. */
+export function nonTerminalStates(): DispatchState[] {
+  return DISPATCH_STATES.filter((s) => !isTerminal(s));
+}
