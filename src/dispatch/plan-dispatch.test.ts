@@ -96,10 +96,16 @@ describe("outcomeFor", () => {
 });
 
 describe("dispatchReady", () => {
-  it("requires owner approval — a still-'planning' feature cannot dispatch", () => {
+  it("approves a still-'planning' feature in-line (dispatch IS the go) and materialises it", () => {
     plan.createFeature(FEATURE);
     plan.addChunk(chunk("a"));
-    expect(() => service.dispatchReady("F1")).toThrow("not owner-approved");
+
+    const made = service.dispatchReady("F1"); // no prior transitionFeature — dispatch approves
+
+    expect(made).toEqual([{ chunkId: "a", dispatchId: "a" }]);
+    expect(plan.getChunk("a")?.state).toBe("dispatched");
+    // planning → ready → building, folded into the one dispatch call.
+    expect(plan.getFeature("F1")?.state).toBe("building");
   });
 
   it("materialises ready chunks: a dispatch per chunk carrying its curation, linked back", () => {

@@ -77,8 +77,10 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
     {
       title: "Dispatch ready chunks",
       description:
-        "Materialise every ready chunk of an owner-approved feature (state 'ready') as a " +
-        "dispatch the build loop will drive. Gated: a still-'planning' feature is refused.",
+        "Approve a feature and materialise its ready chunks as builds, in one step — " +
+        "calling this IS the act of approval (a still-'planning' feature is moved to " +
+        "ready→building). Call it ONLY on the owner's explicit go, never on a passing " +
+        "'looks good', a guess, or silence. The owner still approves every PR on merge.",
       inputSchema: { featureId: z.string().describe("the feature id to dispatch ready chunks for") },
     },
     async ({ featureId }) => runDispatch(service, featureId),

@@ -94,7 +94,7 @@ describe("decompose", () => {
   it("writes the chunk-DAG to the plan", async () => {
     const body = await callText("decompose", DECOMP);
     expect(body).toContain("Decomposed feature F1 into 2 chunk(s) (1 edge(s)): a, b");
-    expect(body).toContain("Awaiting owner approval");
+    expect(body).toContain("call dispatch only on their explicit go");
     expect(plan.listChunks("F1").map((c) => c.id)).toEqual(["a", "b"]);
     expect(plan.getChunk("a")?.featureId).toBe("F1"); // featureId stamped from the feature
   });
@@ -142,12 +142,14 @@ describe("dispatch", () => {
     expect(plan.getChunk("a")?.state).toBe("dispatched");
   });
 
-  it("refuses (tool error) to dispatch a still-'planning' feature — the owner gate", async () => {
+  it("approves and dispatches a still-'planning' feature (calling dispatch IS the go)", async () => {
     plan.createFeature(FEATURE);
     plan.addChunk(chunk("a"));
 
-    expect(await isError("dispatch", { featureId: "F1" })).toBe(true);
-    expect(plan.getChunk("a")?.state).toBe("planned"); // untouched
+    const body = await callText("dispatch", { featureId: "F1" }); // no prior approval step
+    expect(body).toContain("Dispatched 1 ready chunk(s)");
+    expect(plan.getChunk("a")?.state).toBe("dispatched");
+    expect(plan.getFeature("F1")?.state).toBe("building"); // planning → ready → building
   });
 });
 
