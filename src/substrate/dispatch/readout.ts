@@ -1,20 +1,31 @@
-// The cheap-able-fraction readout (ADR 0009 instrument). A pure function over
-// dispatch rows producing cost-and-quality metrics. No I/O, no database access.
-
-import type { Dispatch } from "./model";
-
-/** The readout structure produced by cheapAbleFraction(). */
+/**
+ * The readout structure produced by cheapAbleFraction().
+ * Records metrics on dispatch execution and costs.
+ */
 export interface Readout {
-  total: number; // all dispatches passed in
-  reachedReady: number; // state === "done"
-  escalated: number; // state === "escalated"
-  failed: number; // state === "failed"
-  inFlight: number; // not yet terminal (queued/building/review/amending)
-  cheapAbleFraction: number; // reachedReady / (terminal count); 0 when no terminal dispatches
-  blendedCostPerReadyUsd: number; // (Σ every leg cost over ALL dispatches) / reachedReady; 0 when reachedReady === 0
-  totalCostUsd: number; // Σ (buildCostUsd + reviewCostUsd + amendCostUsd) over all dispatches, nulls as 0
-  amendRoundsHistogram: Record<number, number>; // amendRounds value → count of dispatches with it
+  /** Total number of dispatches processed. */
+  total: number;
+  /** Number of dispatches that reached 'done' state. */
+  reachedReady: number;
+  /** Number of dispatches that were escalated. */
+  escalated: number;
+  /** Number of dispatches that failed. */
+  failed: number;
+  /** Number of dispatches still in-flight (not terminal). */
+  inFlight: number;
+  /** Fraction of terminal dispatches that reached ready state (0 when no terminal dispatches). */
+  cheapAbleFraction: number;
+  /** Average cost per ready dispatch in USD (0 when no ready dispatches). */
+  blendedCostPerReadyUsd: number;
+  /** Total cost of all dispatches in USD, with null costs treated as 0. */
+  totalCostUsd: number;
+  /** Histogram mapping amend rounds (non-negative integers) to count of dispatches with that value. */
+  amendRoundsHistogram: Record<number, number>;
 }
+
+// Named constants for magic numbers used in metrics
+const NO_TERMINAL_DISPATCHES = 0;
+const NO_READY_DISPATCHES = 0;
 
 /** Compute the cheap-able-fraction readout from a list of dispatches. */
 export function cheapAbleFraction(dispatches: Dispatch[]): Readout {
@@ -32,8 +43,8 @@ export function cheapAbleFraction(dispatches: Dispatch[]): Readout {
       (d.buildCostUsd ?? 0) + (d.reviewCostUsd ?? 0) + (d.amendCostUsd ?? 0);
     totalCostUsd += cost;
 
-    // Track amend rounds histogram
-    const rounds = d.amendRounds;
+    // Track amend rounds histogram - normalize to non-negative integers
+    const rounds = Math.max(0, Math.floor(d.amendRounds));
     amendRoundsHistogram[rounds] = (amendRoundsHistogram[rounds] ?? 0) + 1;
 
     switch (d.state) {
@@ -52,8 +63,8 @@ export function cheapAbleFraction(dispatches: Dispatch[]): Readout {
   }
 
   const terminalCount = reachedReady + escalated + failed;
-  const cheapAbleFraction = terminalCount === 0 ? 0 : reachedReady / terminalCount;
-  const blendedCostPerReadyUsd = reachedReady === 0 ? 0 : totalCostUsd / reachedReady;
+  const cheapAbleFraction = terminalCount === NO_TERMINAL_DISPATCHES ? 0 : reachedReady / terminalCount;
+  const blendedCostPerReadyUsd = reachedReady === NO_READY_DISPATCHES ? 0 : totalCostUsd / reachedReady;
 
   return {
     total,

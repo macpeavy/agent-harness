@@ -6,6 +6,7 @@ export { DispatchRepository } from "./repository";
 export type { CreateDispatch, SessionLinks, DispatchFilter } from "./repository";
 
 export { cheapAbleFraction } from "./readout";
+/** Runtime metric readout that computes dispatch outcomes and cost statistics. */
 export type { Readout } from "./readout";
 
 export {
