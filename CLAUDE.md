@@ -24,7 +24,7 @@ We are proving a thesis, not shipping the full system. Scope is deliberately one
 ## Coding standards & skills
 
 - **`docs/standards.md`** — the detailed coding standard every change follows (language, module organization, typed boundaries, error handling, testing, secrets, commits). Read it before writing code; it ships in every build chunk's context pack. This file orients; `standards.md` is the rulebook.
-- **`docs/skills/`** — operational guides for the recurring "how do I add X" surfaces: `adding-a-substrate-module`, `typed-api-boundary`, `persistence-drizzle`, `adding-a-persona`, `adding-a-model-route`, `writing-tests`, `opening-a-pr`. Load the matching skill when you add that kind of surface. These are a **harness-neutral** curated library — ours, not a Claude-Code or OpenCode native skill directory — delivered by guaranteed curated injection into the build context pack (ADR 0018). Index: `docs/skills/README.md`.
+- **`docs/skills/`** — operational guides for the recurring "how do I add X" surfaces: `adding-a-substrate-module`, `typed-api-boundary`, `persistence-drizzle`, `adding-a-persona`, `adding-a-model-route`, `adding-an-mcp-tool`, `writing-tests`, `opening-a-pr`. Load the matching skill when you add that kind of surface. These are a **harness-neutral** curated library — ours, not a Claude-Code or OpenCode native skill directory — delivered by guaranteed curated injection into the build context pack (ADR 0018). Index: `docs/skills/README.md`.
 
 ## Where things go
 
