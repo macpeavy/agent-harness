@@ -14,3 +14,8 @@ export {
   COST_LEGS,
 } from "./model";
 export type { Dispatch, NewDispatch, DispatchState, Escalation, CostLeg } from "./model";
+
+// The read surface: the cheap-able-fraction readout (ADR 0009) and the status table.
+export { cheapAbleFraction } from "./readout";
+export type { Readout } from "./readout";
+export { renderStatus } from "./status";

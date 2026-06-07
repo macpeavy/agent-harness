@@ -11,8 +11,22 @@
 // and reaps their outcomes, so the daemon stays pure dispatch-context.
 
 import { dispatchBranch } from "./legs/build";
-import { DispatchRepository, type DispatchState } from "../substrate/dispatch";
-import { CHUNK_OUTCOMES, PlanRepository, type Chunk, type ChunkOutcome } from "../substrate/plan";
+import {
+  cheapAbleFraction,
+  DispatchRepository,
+  type Dispatch,
+  type DispatchState,
+  type Escalation,
+  type Readout,
+} from "../substrate/dispatch";
+import {
+  CHUNK_OUTCOMES,
+  PlanRepository,
+  type Chunk,
+  type ChunkOutcome,
+  type ChunkState,
+  type FeatureState,
+} from "../substrate/plan";
 
 /** What a single materialised dispatch records back to the caller. */
 export interface MaterialisedDispatch {
@@ -24,6 +38,30 @@ export interface MaterialisedDispatch {
 export interface FlowedOutcome {
   chunkId: string;
   outcome: ChunkOutcome;
+}
+
+/** One chunk's progress: its own state plus its linked dispatch's state, if any. */
+export interface ChunkStatus {
+  id: string;
+  surface: string;
+  state: ChunkState;
+  dispatchId: string | null;
+  dispatchState: DispatchState | null;
+}
+
+/** A parked escalation surfaced for the owner to route (re-decompose / tier-promote). */
+export interface ParkedEscalation {
+  chunkId: string;
+  dispatchId: string;
+  kind: Escalation;
+}
+
+/** A feature's full status: progress, the cheap-able readout, and parked escalations. */
+export interface FeatureStatus {
+  feature: { id: string; title: string; state: FeatureState };
+  chunks: ChunkStatus[];
+  readout: Readout;
+  escalations: ParkedEscalation[];
 }
 
 /**
@@ -140,5 +178,49 @@ export class PlanDispatchService {
       this.plan.transitionFeature(featureId, "done");
 
     return flowed;
+  }
+
+  /**
+   * A read-only digest of a feature for the owner/chief (ADR 0019 `status`): each chunk's
+   * state and its linked dispatch's state, the cheap-able readout over the feature's
+   * dispatches, and the parked escalations to route. Cross-context read — the service is
+   * the layer allowed to join the plan and the registry.
+   */
+  status(featureId: string): FeatureStatus {
+    const feature = this.plan.getFeature(featureId);
+    if (!feature) throw new Error(`no feature ${featureId}`);
+    const chunks = this.plan.listChunks(featureId);
+
+    // Resolve each chunk's linked dispatch once, so the chunk view, the readout, and the
+    // escalation scan all read the same rows.
+    const dispatchById = new Map<string, Dispatch>();
+    for (const c of chunks) {
+      if (!c.dispatchId) continue;
+      const d = this.dispatch.get(c.dispatchId);
+      if (d) dispatchById.set(c.dispatchId, d);
+    }
+
+    const chunkStatuses: ChunkStatus[] = chunks.map((c) => ({
+      id: c.id,
+      surface: c.surface,
+      state: c.state,
+      dispatchId: c.dispatchId,
+      dispatchState: (c.dispatchId && dispatchById.get(c.dispatchId)?.state) || null,
+    }));
+
+    const escalations: ParkedEscalation[] = [];
+    for (const c of chunks) {
+      if (!c.dispatchId) continue;
+      const d = dispatchById.get(c.dispatchId);
+      if (d?.state === "escalated" && d.escalated)
+        escalations.push({ chunkId: c.id, dispatchId: c.dispatchId, kind: d.escalated });
+    }
+
+    return {
+      feature: { id: feature.id, title: feature.title, state: feature.state },
+      chunks: chunkStatuses,
+      readout: cheapAbleFraction([...dispatchById.values()]),
+      escalations,
+    };
   }
 }
