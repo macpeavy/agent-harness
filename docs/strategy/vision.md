@@ -25,7 +25,8 @@ agent-harness is a standalone alternative to the incumbent, chosen at deploy tim
 - the full persona fleet, each routable to its own model;
 - the autonomous merge loop inside a safe permission intersection, the attended (human-present) executor, and the review gate;
 - GitHub as the work and review surface;
-- a remote-attach layer so the operator can observe and steer a running fleet from elsewhere.
+- a remote-attach layer so the operator can observe and steer a running fleet from elsewhere;
+- an OS/network isolation envelope around the harness — the precondition for running an injectable model unattended. The harness provides no security boundary of its own (its permission config is UX, not a boundary), so unattended operation depends on a container sandbox with default-deny egress and the gateway acting as a credential-injecting egress proxy. See ADR 0007.
 
 ## The stack
 
