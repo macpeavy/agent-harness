@@ -22,8 +22,8 @@ A single operator running an autonomous agent fleet on their own hardware. The p
 agent-harness is a standalone alternative to the incumbent, chosen at deploy time — feature and reliability parity is the bar, not a subset. It must carry:
 
 - the dispatch → build → PR → token-free-wake lifecycle, with no idle polling cost;
-- the full persona fleet, each routable to its own model;
-- the autonomous merge loop inside a safe permission intersection, the attended (human-present) executor, and the review gate;
+- the full persona fleet, each routable to its own model — with a strong-tier chief that decomposes work into cheap-able chunks, since the cost win is manufactured by decomposition, not found (ADR 0010);
+- chief-staged, fleet-dispatched execution with the human approving the merge — the review gate and the build → review → amend cycle (ADR 0008) inside it. The autonomous auto-merge loop is a gated, de-prioritized capability, not the primary shape (ADR 0011);
 - GitHub as the work and review surface;
 - a remote-attach layer so the operator can observe and steer a running fleet from elsewhere;
 - an OS/network isolation envelope around the harness — the precondition for running an injectable model unattended. The harness provides no security boundary of its own (its permission config is UX, not a boundary), so unattended operation depends on a container sandbox with default-deny egress and the gateway acting as a credential-injecting egress proxy. See ADR 0007.
