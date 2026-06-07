@@ -27,3 +27,15 @@ The substrate (`src/dispatch/build-leg.ts`) takes an issue, creates an isolated 
 **Follow-up for AGENT-9 (quality):** the worktree has no `node_modules` (fresh checkout), so the builder can't fully typecheck/test its own work in-worktree — it noticed the resulting `process` type error and correctly attributed it to the missing deps. The build leg should `bun install` in the worktree before dispatch so the builder can self-verify. Tracked for the G3 run.
 
 **Mechanism note:** `opencode serve` has no `--dir`; the worktree binding is done via the child's cwd (`src/opencode/serve.ts`). Builder/reviewer agents switched to `mode: all` so the substrate can dispatch them directly (G1 established we drive sessions directly, not via the experimental task tool).
+
+## AGENT-8 — review + wake leg (gate G4) — PASS · 2026-06-07
+
+The substrate dispatches the reviewer (strong route) against a PR over the **token-free wake**: `prompt_async` fires the prompt (HTTP 204), then the substrate polls `/session/{id}/message` until the latest assistant message reports `finish` — *external* idle detection, so no agent burns tokens while idle. Verified against PR #23: idle detected after ~36s, the review captured and posted as a PR comment.
+
+The review itself (sonnet, strong route) was sharp — ranked findings with file:line refs and concrete diffs (JSDoc-vs-`//` convention, missing return-type annotation, no barrel export) and it caught that the `TEST-1` commit references a non-existent backlog ticket. This is the thesis split working: the cheap builder produced clean code (PR #23), the strong reviewer found the real nits.
+
+**Mechanism notes:**
+- `POST /api/session/{id}/wait` returns 503 ("V2 session wait is not available yet") — unusable; idle detection is message-polling. `/event` SSE exists as the future cleaner path.
+- `prompt_async` returns 204 (fire-and-forget). The client gained `promptAsync` + `waitForReply` (`src/opencode/client.ts`); the leg is `src/dispatch/review-leg.ts`.
+
+With **G1, G3-build, and G4 holding, the dispatch → build → PR → wake → review loop is proven end-to-end.** AGENT-9 formalizes the G3 verdict (mergeability judgment + cost-per-PR).
