@@ -36,6 +36,15 @@ model_list:
       model: openrouter/anthropic/claude-sonnet-4.6
       api_key: os.environ/OPENROUTER_API_KEY
 
+  # ── Chief seat (strong): Sonnet — the decomposition / cost engine (ADR 0019). The
+  #    expensive reasoner whose decomposition buys cheap building; same upstream as the
+  #    reviewer for now, a distinct route name so its spend is tracked separately. The
+  #    principal/Opus A/B is a later route (see adding-a-model-route skill). ~$3 / $15 per M.
+  - model_name: chief
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-4.6
+      api_key: os.environ/OPENROUTER_API_KEY
+
 litellm_settings:
   # Drop params a given upstream doesn't support rather than 400-ing — keeps the
   # same client call working across mistral / openai / google / anthropic via OpenRouter.
