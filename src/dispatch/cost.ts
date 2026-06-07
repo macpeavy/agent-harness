@@ -4,8 +4,9 @@
 // Keep in sync with the gateway routes.
 
 export const ROUTE_PRICING: Record<string, { inPerM: number; outPerM: number }> = {
-  builder: { inPerM: 0.1, outPerM: 0.2 }, // deepseek-v4-flash
-  "builder-alt": { inPerM: 0.07, outPerM: 0.27 }, // qwen3-coder-30b
+  builder: { inPerM: 0.15, outPerM: 0.6 }, // Mistral Small 4 (mistral-small-2603) — AGENT-17 pick
+  "builder-nano": { inPerM: 0.1, outPerM: 0.4 }, // gpt-4.1-nano (validated alternate)
+  "builder-gemini": { inPerM: 0.1, outPerM: 0.4 }, // gemini-2.5-flash-lite (validated alternate)
   reviewer: { inPerM: 3.0, outPerM: 15.0 }, // claude-sonnet-4.6
 };
 

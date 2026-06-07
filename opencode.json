@@ -10,15 +10,19 @@
       },
       "models": {
         "builder": {
-          "name": "builder — deepseek-v4-flash (cheap, reasoning; native tool-calling)",
-          "limit": { "context": 1000000, "output": 64000 }
-        },
-        "builder-alt": {
-          "name": "builder-alt — qwen3-coder-30b (cheaper; no native tool-calling, ref only)",
-          "limit": { "context": 160000, "output": 32000 }
+          "name": "builder — Mistral Small 4 (cheap, EU-governed; native tool-calling, AGENT-17)",
+          "limit": { "context": 262144, "output": 32000 }
         },
         "reviewer": {
           "name": "reviewer — claude-sonnet-4.6 (strong)",
+          "limit": { "context": 1000000, "output": 64000 }
+        },
+        "builder-nano": {
+          "name": "builder-nano — gpt-4.1-nano (validated Western alternate, AGENT-17)",
+          "limit": { "context": 1000000, "output": 32000 }
+        },
+        "builder-gemini": {
+          "name": "builder-gemini — gemini-2.5-flash-lite (validated Western alternate, AGENT-17)",
           "limit": { "context": 1000000, "output": 64000 }
         }
       }
@@ -123,6 +127,20 @@
         "edit": "deny",
         "task": "deny"
       }
+    },
+    "builder-nano": {
+      "description": "Validated Western alternate (AGENT-17): builder persona on gpt-4.1-nano.",
+      "mode": "all",
+      "model": "litellm/builder-nano",
+      "prompt": "{file:./agents/builder.md}",
+      "permission": { "edit": "allow", "task": "deny" }
+    },
+    "builder-gemini": {
+      "description": "Validated Western alternate (AGENT-17): builder persona on gemini-2.5-flash-lite.",
+      "mode": "all",
+      "model": "litellm/builder-gemini",
+      "prompt": "{file:./agents/builder.md}",
+      "permission": { "edit": "allow", "task": "deny" }
     }
   }
 }

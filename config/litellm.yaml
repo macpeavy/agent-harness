@@ -7,20 +7,27 @@
 # Listens on http://localhost:4000 by default.
 
 model_list:
-  # ── Cheap builder seat (primary): deepseek-v4-flash. Native tool-calling confirmed in
-  #    AGENT-7 (the A/B winner); ~$0.10 / $0.20 per M, 1M ctx. Reasons before acting
-  #    (a token tax) but actually executes tools — which qwen does not here.
+  # ── Cheap builder seat (primary): Mistral Small 4 (mistral-small-2603). $0.15 / $0.60
+  #    per M, 262K ctx. EU-governed (France) — the data-governance default. Native
+  #    tool-calling confirmed through OpenCode + LiteLLM in the AGENT-17 probe (single
+  #    + multi-step writes, ~$0.002/build, well under the deepseek ~$0.005 baseline).
+  #    DeepSeek (deepseek-v4-flash) and qwen3-coder were REMOVED on governance grounds
+  #    (China-origin; National Intelligence Law). See research note + docs/spike-results.md.
   - model_name: builder
     litellm_params:
-      model: openrouter/deepseek/deepseek-v4-flash
+      model: openrouter/mistralai/mistral-small-2603
       api_key: os.environ/OPENROUTER_API_KEY
 
-  # ── Alternate (reference only): qwen3-coder-30b. Cheaper ($0.07/$0.27) but does NOT
-  #    tool-call through OpenCode+LiteLLM — emits tool calls as text that aren't executed
-  #    (found in AGENT-7), so it can't drive the build leg. Kept to re-check if that changes.
-  - model_name: builder-alt
+  # ── Validated Western alternates (AGENT-17 probe — both tool-call cleanly; available
+  #    fallbacks if the primary regresses). gemini is the OpenRouter half only; the
+  #    Google-direct control is deferred pending a Google key. Live pricing 2026-06-07.
+  - model_name: builder-nano        # gpt-4.1-nano — $0.10/$0.40, 1M ctx (OpenAI, US)
     litellm_params:
-      model: openrouter/qwen/qwen3-coder-30b-a3b-instruct
+      model: openrouter/openai/gpt-4.1-nano
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: builder-gemini      # gemini-2.5-flash-lite — $0.10/$0.40, 1M ctx (Google, US)
+    litellm_params:
+      model: openrouter/google/gemini-2.5-flash-lite
       api_key: os.environ/OPENROUTER_API_KEY
 
   # ── Strong reviewer seat. ~$3 / $15 per M tokens.
@@ -31,7 +38,7 @@ model_list:
 
 litellm_settings:
   # Drop params a given upstream doesn't support rather than 400-ing — keeps the
-  # same client call working across qwen / deepseek / anthropic via OpenRouter.
+  # same client call working across mistral / openai / google / anthropic via OpenRouter.
   drop_params: true
   # Per-request cost is logged for every call — the spike's cost signal for AGENT-9.
   # NOTE: a persistent spend dashboard and cross-request hard-budget enforcement need
