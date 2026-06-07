@@ -23,6 +23,8 @@ describe("cheapAbleFraction readout", () => {
 
   describe("basic metrics with mixed states", () => {
     const base = {
+      surface: null,
+      skills: null,
       route: null,
       buildSessionId: null,
       reviewSessionId: null,
@@ -155,6 +157,8 @@ describe("cheapAbleFraction readout", () => {
 
   describe("cost calculations with null values", () => {
     const base = {
+      surface: null,
+      skills: null,
       route: null,
       buildSessionId: null,
       reviewSessionId: null,
@@ -205,6 +209,8 @@ describe("cheapAbleFraction readout", () => {
 
   describe("edge cases for 0 denominator", () => {
     const base = {
+      surface: null,
+      skills: null,
       route: null,
       buildSessionId: null,
       reviewSessionId: null,
@@ -265,6 +271,8 @@ describe("cheapAbleFraction readout", () => {
 
   describe("amendRoundsHistogram builds correctly", () => {
     const base = {
+      surface: null,
+      skills: null,
       route: null,
       buildSessionId: null,
       reviewSessionId: null,

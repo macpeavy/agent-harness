@@ -37,6 +37,10 @@ export interface CreateDispatch {
   branch: string;
   /** The build spec — the issue body the builder works from. */
   spec: string;
+  /** The chunk's one file — drives the build's default context-pack skills (ADR 0018). */
+  surface?: string;
+  /** The chief's curated skill names (not the text) for the context pack (ADR 0019). */
+  skills?: string[];
   route?: string;
 }
 
@@ -119,6 +123,8 @@ export class DispatchRepository {
         title: rec.title,
         branch: rec.branch,
         spec: rec.spec,
+        surface: rec.surface ?? null,
+        skills: rec.skills ?? null,
         state: "queued",
         route: rec.route ?? null,
         amendRounds: 0,

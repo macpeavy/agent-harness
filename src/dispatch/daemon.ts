@@ -108,7 +108,17 @@ export class DispatchDaemon {
   // advance to review and continue.
   private async build(id: string): Promise<void> {
     const dispatch = this.require(id);
-    const issue: Issue = { id: dispatch.issueId, title: dispatch.title, body: dispatch.spec };
+    // Reconstruct the build Issue from the row, carrying the chunk's curation (surface +
+    // curated skill names) so the right context pack injects (ADR 0018/0019) — and so a
+    // resumed build keeps it. Null columns fall through to the build leg's standards-only
+    // default. `?? undefined` keeps the optional Issue fields optional (not null).
+    const issue: Issue = {
+      id: dispatch.issueId,
+      title: dispatch.title,
+      body: dispatch.spec,
+      surface: dispatch.surface ?? undefined,
+      skills: dispatch.skills ?? undefined,
+    };
 
     const result = await this.legs.build(issue, this.config);
     this.repo.setSessions(id, { buildSessionId: result.buildSessionId });
