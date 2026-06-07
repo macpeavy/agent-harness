@@ -4,6 +4,8 @@
 
 export interface CreateSessionOpts {
   title?: string;
+  /** Run the session as a named agent (e.g. "builder"), applying its prompt + route + permissions. */
+  agent?: string;
   /** Pin the session to a specific gateway route, e.g. { providerID: "litellm", id: "builder" }. */
   model?: { providerID: string; id: string };
   /** Set for a child (sub-agent) session. */

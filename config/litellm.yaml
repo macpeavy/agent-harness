@@ -7,16 +7,20 @@
 # Listens on http://localhost:4000 by default.
 
 model_list:
-  # ── Cheap builder seat (primary): coding-specialized MoE. ~$0.07 / $0.27 per M tokens.
+  # ── Cheap builder seat (primary): deepseek-v4-flash. Native tool-calling confirmed in
+  #    AGENT-7 (the A/B winner); ~$0.10 / $0.20 per M, 1M ctx. Reasons before acting
+  #    (a token tax) but actually executes tools — which qwen does not here.
   - model_name: builder
     litellm_params:
-      model: openrouter/qwen/qwen3-coder-30b-a3b-instruct
+      model: openrouter/deepseek/deepseek-v4-flash
       api_key: os.environ/OPENROUTER_API_KEY
 
-  # ── Cheap builder seat (alternate): for the AGENT-9 / G3 A/B. ~$0.10 / $0.20 per M, 1M ctx.
+  # ── Alternate (reference only): qwen3-coder-30b. Cheaper ($0.07/$0.27) but does NOT
+  #    tool-call through OpenCode+LiteLLM — emits tool calls as text that aren't executed
+  #    (found in AGENT-7), so it can't drive the build leg. Kept to re-check if that changes.
   - model_name: builder-alt
     litellm_params:
-      model: openrouter/deepseek/deepseek-v4-flash
+      model: openrouter/qwen/qwen3-coder-30b-a3b-instruct
       api_key: os.environ/OPENROUTER_API_KEY
 
   # ── Strong reviewer seat. ~$3 / $15 per M tokens.
