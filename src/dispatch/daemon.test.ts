@@ -143,6 +143,37 @@ describe("the happy path", () => {
   });
 });
 
+describe("curation passthrough (ADR 0018/0019)", () => {
+  it("reconstructs the build Issue with the row's surface + curated skills", async () => {
+    // The service persists curation on the row; the daemon must hand it to the build leg
+    // (which injects the matching context pack) — and it survives a resume, since the
+    // Issue is rebuilt from the row each time.
+    repo.create({
+      id: "d1",
+      issueId: "ISSUE-1",
+      title: "Add a thing",
+      branch: dispatchBranch(ISSUE),
+      spec: "Do the thing.",
+      surface: "src/substrate/dispatch/schema.ts",
+      skills: ["persistence-drizzle", "writing-tests"],
+    });
+    const { legs, rec } = fakeLegs();
+    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    expect(rec.build[0]?.surface).toBe("src/substrate/dispatch/schema.ts");
+    expect(rec.build[0]?.skills).toEqual(["persistence-drizzle", "writing-tests"]); // JSON round-trip
+  });
+
+  it("leaves surface/skills undefined when the row carries none (standards-only fallback)", async () => {
+    enqueue("d1");
+    const { legs, rec } = fakeLegs();
+    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    expect(rec.build[0]?.surface).toBeUndefined(); // null column → undefined, not null
+    expect(rec.build[0]?.skills).toBeUndefined();
+  });
+});
+
 describe("build that changes nothing", () => {
   it("fails the dispatch and never reaches review", async () => {
     enqueue("d1");

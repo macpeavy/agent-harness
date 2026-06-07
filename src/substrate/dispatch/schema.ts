@@ -21,6 +21,14 @@ export const dispatches = sqliteTable("dispatches", {
   // NOT NULL: a dispatch with no spec has nothing to build — the domain forbids it
   // (CreateDispatch.spec is required), and the column enforces the same.
   spec: text("spec").notNull(),
+  // The chunk's build-context curation, carried so the daemon reconstructs the build
+  // Issue from the row and the right context pack injects (ADR 0018/0019). `surface` is
+  // the chunk's one file (drives default skill inference); `skills` is the chief's
+  // curated skill *names* (not the text — the build leg reads docs/skills/<name>.md at
+  // build time). Both nullable: a dispatch with neither falls back to standards-only.
+  // Persisted (not just in-memory) so a resumed build (resumeIncomplete) keeps curation.
+  surface: text("surface"),
+  skills: text("skills", { mode: "json" }).$type<string[]>(),
   state: text("state", { enum: DISPATCH_STATES }).notNull().default("queued"),
   // Linked OpenCode session ids — the registry links them, it does not own the
   // sessions or duplicate their data (ADR 0009, above-OpenCode layering).
