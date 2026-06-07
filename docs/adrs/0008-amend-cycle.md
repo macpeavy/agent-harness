@@ -28,7 +28,7 @@ Each amend round, the cap, and any escalation are recorded on the dispatch (ADR 
 - Heavy work becomes reliably mergeable on the cheap-build / strong-review split, at a cost that holds: even 2–3 amend rounds at ~$0.09 keep cost-per-PR under ~$0.30, an order of magnitude under the $2.80 budget (spike-measured).
 - The cap turns "the cheap model struggled" into actionable signal — re-decompose or promote — instead of an unbounded retry or a silent bad merge.
 - Amend-rounds-per-chunk becomes the primary readout of decomposition quality and the cheap-able fraction (ADR 0009, ADR 0010).
-- The substrate gains an amend leg (grown from `src/dispatch/review-leg.ts`): findings parsing, the re-dispatch prompt, the cap counter, the escalation switch.
+- The substrate gains an amend leg (`src/dispatch/legs/amend.ts`, alongside the build/review legs): findings parsing, the re-dispatch prompt, the cap counter, the escalation switch.
 - A blocking-vs-nonblocking finding distinction is needed so cosmetic nits don't burn amend rounds — the reviewer must rank severity (it already does; the substrate must consume it).
 
 ## Alternatives considered

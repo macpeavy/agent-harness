@@ -32,8 +32,8 @@ The substrate (`src/`) is organized by responsibility, one concern per directory
 ```
 src/
   index.ts            # entrypoint / CLI for the substrate
-  opencode/           # typed client + thin wrappers over the OpenCode REST API
-  dispatch/           # issue → branch → build/review/amend legs (the service layer)
+  opencode/           # typed client, serve, agent-runner (run a named agent in a worktree)
+  dispatch/           # the service layer: the loop daemon + legs/ (build/review/amend)
   wake/               # idle detection + prompt_async wake driver
   github/             # gh/git plumbing, PR creation, the merge gate
   substrate/          # durable state + domain, organized by context (see below)
@@ -69,7 +69,7 @@ the loop calls `repository.transition(...)`, never a query builder.
   boundary — see ADR 0014). Don't sprawl a change across many files; if it needs to,
   it's more than one chunk.
 - **Helpers stay local until reused.** A function used in one module is not exported
-  (e.g. `slugify` in `dispatch/build-leg.ts`). Promote to `util/` only on the second use.
+  (e.g. `slugify` in `dispatch/legs/build.ts`). Promote to `util/` only on the second use.
 - **Imports are relative within `src/`** (`../opencode/client`), no path aliases.
 - **Published contracts get their own file; one-off types stay co-located.** A type that
   is the shared contract between modules — the dispatch domain model and state machine
@@ -81,7 +81,7 @@ the loop calls `repository.transition(...)`, never a query builder.
 ## Types & boundaries
 
 - **Export types as `interface`; behavior as `function`/`class`.** Name types
-  PascalCase, functions/vars camelCase, files kebab-case (`build-leg.ts`).
+  PascalCase, functions/vars camelCase, files kebab-case (`agent-runner.ts`).
 - **Every exported function has an explicit return type** (`Promise<string>`,
   `: string[]`). Don't rely on inference at a module boundary.
 - **Typed boundaries: cast foreign JSON to a local shape and default every field.**

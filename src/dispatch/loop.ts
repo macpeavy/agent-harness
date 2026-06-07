@@ -5,8 +5,8 @@
 // (a) the cheap builder produced a PR a human would merge (judged on the PR +
 // review) and (b) cost-per-PR clears the budget (≈ $250 / ~90 PRs ≈ $2.80).
 
-import { runBuildLeg, type Issue } from "./build-leg";
-import { runReviewLeg } from "./review-leg";
+import { runBuildLeg, type Issue } from "./legs/build";
+import { runReviewLeg } from "./legs/review";
 import { estimateCost } from "./cost";
 import { loadConfig } from "../config";
 
