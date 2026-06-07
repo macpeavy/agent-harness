@@ -13,6 +13,7 @@ const SEED: CreateDispatch = {
   issueId: "AGENT-18",
   title: "Dispatch registry",
   branch: "agent-18-dispatch-registry",
+  spec: "Build the dispatch registry per ADR 0009.",
 };
 
 beforeEach(() => {
@@ -28,14 +29,21 @@ afterEach(() => {
 describe("the transition graph", () => {
   it("derives the terminal set from the graph, not a hardcoded list", () => {
     expect(isTerminal("done")).toBe(true);
-    expect(isTerminal("escalated")).toBe(true);
     expect(isTerminal("failed")).toBe(true);
     expect(isTerminal("queued")).toBe(false);
     expect(isTerminal("amending")).toBe(false);
+    // escalated is a paused state, not terminal — it can rewake to building.
+    expect(isTerminal("escalated")).toBe(false);
   });
 
-  it("derives non-terminal states from the graph", () => {
-    expect(nonTerminalStates().sort()).toEqual(["amending", "building", "queued", "review"]);
+  it("derives non-terminal states from the graph (escalated is paused, not terminal)", () => {
+    expect(nonTerminalStates().sort()).toEqual([
+      "amending",
+      "building",
+      "escalated",
+      "queued",
+      "review",
+    ]);
   });
 
   it("every transition target is itself a known state (no dangling edges)", () => {
@@ -46,12 +54,13 @@ describe("the transition graph", () => {
 });
 
 describe("create / get / list", () => {
-  it("creates a dispatch in state 'queued'", () => {
+  it("creates a dispatch in state 'queued', persisting the spec", () => {
     repo.create(SEED);
     const d = repo.get("d1");
     expect(d?.state).toBe("queued");
     expect(d?.issueId).toBe("AGENT-18");
     expect(d?.amendRounds).toBe(0);
+    expect(d?.spec).toBe("Build the dispatch registry per ADR 0009.");
   });
 
   it("returns null for an unknown id", () => {
@@ -112,6 +121,22 @@ describe("escalate", () => {
   it("rejects escalation from a state with no escalated edge", () => {
     repo.create(SEED);
     expect(() => repo.escalate("d1", "attended")).toThrow("illegal transition queued → escalated");
+  });
+
+  it("rewakes from escalated back to building on resolution", () => {
+    repo.create(SEED);
+    repo.transition("d1", "building");
+    repo.escalate("d1", "tier-promote");
+    repo.transition("d1", "building"); // rewoken on resolution
+    expect(repo.get("d1")?.state).toBe("building");
+  });
+
+  it("can abandon an escalated dispatch to failed", () => {
+    repo.create(SEED);
+    repo.transition("d1", "building");
+    repo.escalate("d1", "attended");
+    repo.transition("d1", "failed");
+    expect(repo.get("d1")?.state).toBe("failed");
   });
 });
 
@@ -188,10 +213,13 @@ describe("the instrument columns", () => {
 });
 
 describe("resumeIncomplete", () => {
-  it("returns only non-terminal dispatches, newest first", () => {
+  it("returns non-terminal dispatches (incl. parked-escalated), newest first", () => {
     repo.create({ ...SEED, id: "queued1" });
     repo.create({ ...SEED, id: "building1" });
     repo.transition("building1", "building");
+    repo.create({ ...SEED, id: "escalated1" });
+    repo.transition("escalated1", "building");
+    repo.escalate("escalated1", "re-decompose");
     repo.create({ ...SEED, id: "done1" });
     repo.transition("done1", "building");
     repo.transition("done1", "review");
@@ -200,7 +228,9 @@ describe("resumeIncomplete", () => {
     repo.transition("failed1", "building");
     repo.transition("failed1", "failed");
 
+    // queued/building/escalated are incomplete; done/failed are not. An escalated
+    // dispatch is parked work the daemon resumes (rewakes), so it must surface here.
     const incomplete = repo.resumeIncomplete().map((d) => d.id);
-    expect(incomplete).toEqual(["building1", "queued1"]);
+    expect(incomplete).toEqual(["escalated1", "building1", "queued1"]);
   });
 });

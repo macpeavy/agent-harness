@@ -35,6 +35,8 @@ export interface CreateDispatch {
   issueId: string;
   title: string;
   branch: string;
+  /** The build spec — the issue body the builder works from. */
+  spec: string;
   route?: string;
 }
 
@@ -114,6 +116,7 @@ export class DispatchRepository {
         issueId: rec.issueId,
         title: rec.title,
         branch: rec.branch,
+        spec: rec.spec,
         state: "queued",
         route: rec.route ?? null,
         amendRounds: 0,
