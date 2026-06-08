@@ -19,8 +19,11 @@ export const DISPATCH_STATES = [
 ] as const;
 export type DispatchState = (typeof DISPATCH_STATES)[number];
 
-/** The ADR 0008 escalation ladder — where a cap-exceeded dispatch was handed. */
-export const ESCALATIONS = ["re-decompose", "tier-promote", "attended"] as const;
+/** Why a dispatch parked — the escalation reasons in the ADR 0023 failure taxonomy. The
+ *  classic ladder (re-decompose / tier-promote / attended) plus the two non-success build
+ *  outcomes that used to hard-fail: `no-op` (builder changed nothing) and `error` (a leg threw).
+ *  Every parked reason is chief-routable (status → redecompose / promote / address). */
+export const ESCALATIONS = ["re-decompose", "tier-promote", "attended", "no-op", "error"] as const;
 export type Escalation = (typeof ESCALATIONS)[number];
 
 /** The legs a dispatch's cost is split across (the instrument). */

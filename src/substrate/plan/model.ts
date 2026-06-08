@@ -33,15 +33,31 @@ export const FEATURE_TRANSITIONS: Record<FeatureState, readonly FeatureState[]> 
  * owner's to merge; the owner-review → amend loop (slice 4b) runs *within* `review` (amends
  * re-land in session-main without leaving the state); the owner's merge is the only thing
  * that moves `review → done`. So `done` now means "merged", and the merge stays the gate.
+ *
+ * `needs-attention` is the failure-side counterpart (ADR 0023 row 7): the instant any chunk
+ * parks (`escalated`) or terminally fails, the session leaves `building` for `needs-attention`
+ * — distinct from `review` (build-complete, route nothing) so the signal says "stuck, route me"
+ * not "ready for review". It resumes to `building` once the chief routes the parked chunk. A
+ * session NEVER spins in `building` with a parked/failed chunk.
  */
-export const SESSION_STATES = ["planning", "ready", "building", "review", "done", "failed", "abandoned"] as const;
+export const SESSION_STATES = [
+  "planning",
+  "ready",
+  "building",
+  "review",
+  "needs-attention",
+  "done",
+  "failed",
+  "abandoned",
+] as const;
 export type SessionState = (typeof SESSION_STATES)[number];
 
 export const SESSION_TRANSITIONS: Record<SessionState, readonly SessionState[]> = {
   planning: ["ready"],
   ready: ["building"],
-  building: ["review", "failed"], // chunks all landed → awaiting the owner's review/merge
+  building: ["review", "needs-attention", "failed"], // all landed → review; any parked/failed → needs-attention
   review: ["done", "failed"], // the owner merges the PR → done
+  "needs-attention": ["building", "review"], // chief routed the parked chunk → resume building (or review if all resolved)
   done: [],
   failed: [],
   abandoned: [], // operator kill switch (abandon CLI) — terminal, reached by force-transition

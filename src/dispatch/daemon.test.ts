@@ -196,14 +196,41 @@ describe("curation passthrough (ADR 0018/0019)", () => {
   });
 });
 
-describe("build that changes nothing", () => {
-  it("fails the dispatch and never reaches review", async () => {
+describe("build that changes nothing (no-op, ADR 0023 row 1)", () => {
+  it("re-prompts ONCE, then parks (reason no-op) — never terminal failed, never reaches review", async () => {
     enqueue("d1");
-    const { legs, rec } = fakeLegs({ changed: false });
+    const { legs, rec } = fakeLegs({ changed: false }); // every build is a no-op
     await new DispatchDaemon(repo, CONFIG, legs).runOnce();
 
-    expect(repo.get("d1")?.state).toBe("failed");
+    const d = repo.get("d1");
+    expect(d?.state).toBe("escalated"); // parked, NOT failed
+    expect(d?.escalated).toBe("no-op");
+    expect(rec.build).toHaveLength(2); // initial + one re-prompt, then it gives up
     expect(rec.review).toHaveLength(0);
+  });
+
+  it("the re-prompt rescues a no-op that then writes the change", async () => {
+    enqueue("d1");
+    // First build no-ops; the re-prompt build changes something → proceeds normally.
+    const { legs, rec } = fakeLegs();
+    let calls = 0;
+    legs.build = async (issue) => {
+      calls++;
+      return {
+        branch: dispatchBranch(issue),
+        worktree: "/tmp/wt",
+        changed: calls > 1, // no-op first, real on the re-prompt
+        reply: "ok",
+        route: "builder",
+        buildSessionId: "ses",
+        tokens: { input: 10, output: 5 },
+      };
+    };
+    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    expect(calls).toBe(2);
+    expect(repo.get("d1")?.state).toBe("done");
+    expect(rec.review).toHaveLength(1);
   });
 });
 
@@ -312,16 +339,19 @@ describe("build timeout (ADR 0020 robustness)", () => {
   });
 });
 
-describe("fault isolation", () => {
-  it("fails the dispatch whose build throws and still drives the others", async () => {
+describe("fault isolation (leg error, ADR 0023 row 2)", () => {
+  it("parks the dispatch whose build throws (reason error) and still drives the others", async () => {
     enqueue("bad", { id: "BAD", title: "Breaks", body: "boom" });
     enqueue("good", { id: "GOOD", title: "Works", body: "fine" });
     const { legs } = fakeLegs({ buildThrowsFor: "BAD" });
 
     await new DispatchDaemon(repo, CONFIG, legs).runOnce();
 
-    expect(repo.get("bad")?.state).toBe("failed");
-    expect(repo.get("good")?.state).toBe("done");
+    const bad = repo.get("bad");
+    expect(bad?.state).toBe("escalated"); // parked, NOT terminal failed
+    expect(bad?.escalated).toBe("error");
+    expect(bad?.escalationReason).toContain("build boom"); // the leg's message, surfaced
+    expect(repo.get("good")?.state).toBe("done"); // the loop survived and drove the other
   });
 });
 

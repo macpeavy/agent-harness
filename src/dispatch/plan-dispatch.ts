@@ -434,15 +434,30 @@ export class PlanDispatchService {
       flowed.push({ chunkId: chunk.id, outcome });
     }
 
-    // A session's build is complete when every chunk reached a terminal-success state — `done`,
-    // or `superseded` (re-decomposed: retired, its work carried by replacements that are done).
-    // A `failed` or in-flight chunk holds it open. Build-complete moves the session to `review`,
-    // NOT `done` (ADR 0020 §6): its chunks are in session-main and the PR awaits the owner. The
-    // owner's merge (closeSession) is the only thing that reaches `done` — the merge gate.
+    // Derive the session's state from its chunks (ADR 0020 §6 happy path + ADR 0023 row 7 failure
+    // path), so a session NEVER spins in `building` once a chunk parks or fails:
+    //  - any chunk parked (`escalated`) or terminally `failed` → `needs-attention` + signal the
+    //    chief, within this tick (the blocked DAG is reported, not hidden);
+    //  - else every chunk terminal-success (`done`/`superseded`) → `review` (PR awaits the owner);
+    //  - a chunk's recovery (the chief routed it) clears `needs-attention` back to `building`.
     const chunks = this.plan.listChunks(sessionId);
+    const blocked = chunks.filter((c) => c.state === "escalated" || c.state === "failed");
     const buildComplete = chunks.length > 0 && chunks.every((c) => c.state === "done" || c.state === "superseded");
-    if (session.state === "building" && buildComplete) {
-      this.plan.transitionSession(sessionId, "review");
+
+    if (session.state === "building") {
+      if (blocked.length > 0) {
+        this.plan.transitionSession(sessionId, "needs-attention");
+        console.warn(
+          `session ${sessionId} → needs-attention: ${blocked.length} chunk(s) parked/failed ` +
+            `(${blocked.map((c) => c.id).join(", ")}) — route via status/redecompose/promote`,
+        );
+      } else if (buildComplete) {
+        this.plan.transitionSession(sessionId, "review");
+      }
+    } else if (session.state === "needs-attention" && blocked.length === 0) {
+      // The chief routed the parked chunk(s) — resume. Back to `building` for the re-dispatched
+      // work; straight to `review` only if routing already resolved everything to done/superseded.
+      this.plan.transitionSession(sessionId, buildComplete ? "review" : "building");
     }
 
     return flowed;

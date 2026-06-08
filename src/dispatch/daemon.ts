@@ -16,15 +16,25 @@ import { runAmendLeg, type AmendResult } from "./legs/amend";
 import { runMergeLeg, type MergeResult, type MergeTarget } from "./legs/merge";
 import { loadConfig, type SubstrateConfig } from "../config";
 import { AgentTimeoutError } from "../opencode/client";
-import { DispatchRepository, TRANSITIONS, type Dispatch } from "../substrate/dispatch";
+import { DispatchRepository, type Dispatch } from "../substrate/dispatch";
+import { escalateOrFail } from "./escalation";
 
 /** The legs the daemon drives — injected so the orchestration is testable with fakes. */
 export interface DispatchLegs {
-  build(issue: Issue, config: SubstrateConfig): Promise<BuildResult>;
+  build(issue: Issue, config: SubstrateConfig, opts?: { reprompt?: string }): Promise<BuildResult>;
   review(target: ReviewTarget, config: SubstrateConfig): Promise<ReviewResult>;
   amend(target: ReviewTarget, findings: string, config: SubstrateConfig): Promise<AmendResult>;
   merge(target: MergeTarget, config: SubstrateConfig): Promise<MergeResult>;
 }
+
+// The no-op gate's re-instruction (ADR 0023 §3b): when the builder reports done but the diff is
+// empty, re-prompt ONCE with this before parking — a weak model sometimes explores and declares
+// victory without writing anything; a sharper second ask cheaply rescues some of those.
+const NO_OP_REPROMPT =
+  "You reported the task complete, but you changed no files — the diff is empty, so the work is " +
+  "NOT done. Implement the change now: edit the file(s) the issue specifies, then run `git diff` " +
+  "to confirm the diff is non-empty before you finish. Reading, exploring, or planning is not " +
+  "completion. If the change is genuinely impossible as specified, say so explicitly instead.";
 
 const defaultLegs: DispatchLegs = {
   build: runBuildLeg,
@@ -62,11 +72,11 @@ export class DispatchDaemon {
       try {
         await this.step(dispatch);
       } catch (err) {
-        // A model-turn timeout isn't a dead end — escalate it (parked, chief-visible) with the
-        // reason, so the chief can promote the tier or re-decompose, rather than a terminal fail
-        // or an unhandled throw the loop can't survive (ADR 0020). Anything else fails.
+        // No failure is a dead end (ADR 0023): a timeout or a leg error both escalate→park
+        // (chief-visible, with a reason), never a terminal fail or an unhandled throw the loop
+        // can't survive. Both route through the one escalation surface.
         if (err instanceof AgentTimeoutError) this.escalateTimeout(dispatch.id, err);
-        else this.fail(dispatch.id, err);
+        else this.parkLegError(dispatch.id, err);
       }
       driven++;
     }
@@ -134,19 +144,31 @@ export class DispatchDaemon {
       sessionBranch: dispatch.sessionBranch ?? undefined,
     };
 
-    const result = await this.legs.build(issue, this.config);
-    this.repo.setSessions(id, { buildSessionId: result.buildSessionId });
-    this.repo.setRoute(id, result.route);
-    this.repo.setCost(id, "build", estimateCost(result.route, result.tokens.input, result.tokens.output));
+    let result = await this.legs.build(issue, this.config);
+    this.recordBuild(id, result);
 
-    // The builder changed nothing → nothing to review or merge (ADR 0020: no per-chunk PR,
-    // so a built chunk advances to review on `changed` alone).
+    // No-op gate (ADR 0023 §3b): an empty diff means the builder reported done without writing
+    // anything (the false-success no-op). Re-prompt ONCE with a sharper instruction and rebuild;
+    // if it's STILL empty, park it (reason `no-op`) — never terminal-fail, never loop.
     if (!result.changed) {
-      this.repo.transition(id, "failed");
-      return;
+      result = await this.legs.build(issue, this.config, { reprompt: NO_OP_REPROMPT });
+      this.recordBuild(id, result);
+      if (!result.changed) {
+        const { reason } = escalateOrFail(this.repo, id, { kind: "no-op" });
+        console.error(`dispatch ${id} escalated (${reason}): builder changed nothing after a re-prompt`);
+        return;
+      }
     }
     this.repo.transition(id, "review");
     await this.review(id, result.branch);
+  }
+
+  // Record a build attempt's instrument fields. Cost accumulates (the no-op gate runs the leg
+  // twice); route + session id reflect the latest attempt.
+  private recordBuild(id: string, result: BuildResult): void {
+    this.repo.setSessions(id, { buildSessionId: result.buildSessionId });
+    this.repo.setRoute(id, result.route);
+    this.repo.setCost(id, "build", estimateCost(result.route, result.tokens.input, result.tokens.output));
   }
 
   // The review → amend cycle (ADR 0008): review; if clean, ready (done); if blocking,
@@ -172,16 +194,16 @@ export class DispatchDaemon {
       }
       if (dispatch.amendRounds >= this.config.amendCap) {
         // Cap exceeded — not a retry-harder signal but an under-decomposition one
-        // (ADR 0008). Park as re-decompose, to be rewoken on resolution.
-        this.repo.escalate(id, "re-decompose");
+        // (ADR 0008/0023 row 4). Park, to be rewoken on resolution.
+        escalateOrFail(this.repo, id, { kind: "amend-cap" });
         return;
       }
       this.repo.transition(id, "amending");
       const amended = await this.amend(id, target, result.review);
       if (!amended) {
         // The builder couldn't change anything against the findings — re-reviewing
-        // identical code would just burn rounds. It's stuck; escalate now.
-        this.repo.escalate(id, "re-decompose");
+        // identical code would just burn rounds. It's stuck; escalate now (row 4).
+        escalateOrFail(this.repo, id, { kind: "amend-cap" });
         return;
       }
       this.repo.transition(id, "review");
@@ -214,7 +236,7 @@ export class DispatchDaemon {
     const amended = await this.amend(id, target, findings);
     this.repo.clearPendingFindings(id);
     if (!amended) {
-      this.repo.escalate(id, "attended");
+      escalateOrFail(this.repo, id, { kind: "owner-note" }); // row 5 → park to attended
       return;
     }
     this.repo.transition(id, "review");
@@ -230,29 +252,21 @@ export class DispatchDaemon {
     await this.legs.merge({ branch, sessionBranch: dispatch.sessionBranch, title: dispatch.title }, this.config);
   }
 
-  // A model turn timed out: escalate it for the chief (parked, surfaced in status with the
-  // reason) so they can tier-promote or re-decompose. If the current state has no escalate edge
-  // (it shouldn't — a timeout happens mid build/review/amend), fall back to fail so it's never
-  // left stuck. `attended` is the kind: a timeout wants a human/chief call, not an auto-retry.
+  // A model turn timed out (ADR 0023 row 3): park it for the chief through the central surface —
+  // it can tier-promote or re-decompose. escalateOrFail falls back to terminal only if the state
+  // has no escalate edge (it shouldn't — a timeout happens mid build/review/amend).
   private escalateTimeout(id: string, err: AgentTimeoutError): void {
-    const current = this.repo.get(id);
-    if (current && TRANSITIONS[current.state].includes("escalated")) {
-      this.repo.escalate(id, "attended", err.message);
-      console.error(`dispatch ${id} escalated (timeout): ${err.message}`);
-    } else {
-      this.fail(id, err);
-    }
+    escalateOrFail(this.repo, id, { kind: "timeout", message: err.message });
+    console.error(`dispatch ${id} escalated (timeout): ${err.message}`);
   }
 
-  // Mark a dispatch failed (if the graph allows it from its current state) and log the
-  // cause. Keeps one bad dispatch from stopping the loop.
-  private fail(id: string, err: unknown): void {
+  // A leg threw (ADR 0023 row 2): park it (reason `error`) through the central surface, not a
+  // terminal fail — a worktree/install/agent error is recoverable (redecompose / promote / retry).
+  // Keeps one bad dispatch from stopping the loop.
+  private parkLegError(id: string, err: unknown): void {
     const message = err instanceof Error ? err.message : String(err);
-    const current = this.repo.get(id);
-    if (current && TRANSITIONS[current.state].includes("failed")) {
-      this.repo.transition(id, "failed");
-    }
-    console.error(`dispatch ${id} failed: ${message}`);
+    escalateOrFail(this.repo, id, { kind: "error", message });
+    console.error(`dispatch ${id} escalated (error): ${message}`);
   }
 
   private require(id: string): Dispatch {
