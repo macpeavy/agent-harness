@@ -25,6 +25,11 @@ export interface SubstrateConfig {
   reviewerAgent: string;
   /** Max amend rounds before a dispatch escalates (ADR 0008). Default 3. */
   amendCap: number;
+  /** Ceiling (ms) for a single agent turn — the build/review/amend model call. A real chunk
+   *  build on the cheap tier (Mistral reading a full context pack) is far slower than a toy
+   *  util, so this is generous; on timeout the dispatch escalates cleanly (ADR 0020). Default
+   *  10 min. */
+  agentTimeoutMs: number;
 }
 
 // A positive integer from env, or the fallback (a malformed value doesn't silently
@@ -64,5 +69,6 @@ export async function loadConfig(): Promise<SubstrateConfig> {
     builderStrongAgent: process.env.AH_BUILDER_STRONG_AGENT ?? "builder-strong",
     reviewerAgent: process.env.AH_REVIEWER_AGENT ?? "reviewer",
     amendCap: intFromEnv(process.env.AH_AMEND_CAP, 3),
+    agentTimeoutMs: intFromEnv(process.env.AH_AGENT_TIMEOUT_MS, 600_000),
   };
 }

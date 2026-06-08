@@ -15,6 +15,7 @@ export const DISPATCH_STATES = [
   "done",
   "escalated",
   "failed",
+  "abandoned",
 ] as const;
 export type DispatchState = (typeof DISPATCH_STATES)[number];
 
@@ -56,6 +57,9 @@ export const TRANSITIONS: Record<DispatchState, readonly DispatchState[]> = {
   // resumeIncomplete() surfaces it; the daemon parks it until an external rewake.
   escalated: ["building", "failed"],
   failed: [],
+  // operator kill switch (the abandon CLI) — terminal, reached by a deliberate force-transition
+  // (DispatchRepository.abandonMany), not a graph edge: an operator kills a dispatch from any state.
+  abandoned: [],
 };
 
 /** A state is terminal when it has no outgoing transitions. */

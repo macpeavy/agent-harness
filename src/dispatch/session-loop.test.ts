@@ -16,6 +16,7 @@ const CONFIG = {
   builderStrongAgent: "builder-strong",
   reviewerAgent: "reviewer",
   amendCap: 3,
+  agentTimeoutMs: 600_000,
 } satisfies SubstrateConfig;
 
 let dir: string;
@@ -145,5 +146,58 @@ describe("SessionLoop.runOnce", () => {
     const advanced = await loop().runOnce();
     expect(advanced).toBe(0);
     expect(opened).toEqual([]);
+  });
+
+  // The priority fix: a throw in one session's tick must never exit the loop process.
+  it("survives a session whose advance throws — records the error and advances the others", async () => {
+    plan.createFeature(FEATURE);
+    plan.createSession({ id: "S1", featureId: "F1" });
+    plan.createSession({ id: "S2", featureId: "F1" });
+    plan.addChunk(chunk("a", "S1"));
+    plan.addChunk(chunk("b", "S2"));
+    service.approve("S1");
+
+    // The open leg throws for S1 (e.g. a gh/git hiccup), succeeds for S2.
+    const throwingLegs: SessionLegs = {
+      async open(sessionId) {
+        if (sessionId === "S1") throw new Error("gh pr create boom");
+        opened.push(sessionId);
+        return { branch: `session-main-${sessionId}`, prNumber: 100, prUrl: `http://pr/${sessionId}` };
+      },
+    };
+    const loopWithThrow = new SessionLoop(plan, service, CONFIG, throwingLegs);
+
+    const advanced = await loopWithThrow.runOnce(); // must NOT throw
+
+    expect(advanced).toBe(1); // S2 advanced; S1's throw was caught, not counted
+    expect(opened).toEqual(["S2"]); // S2 got opened despite S1 blowing up
+    expect(plan.getChunk("b")?.state).toBe("dispatched"); // S2 made real progress
+    expect(plan.getSession("S1")?.lastError).toContain("gh pr create boom"); // recorded for the chief
+    expect(plan.getChunk("a")?.state).toBe("planned"); // S1 made no progress, left to retry
+  });
+
+  it("clears a session's recorded error on a later clean tick", async () => {
+    plan.createFeature(FEATURE);
+    plan.createSession({ id: "S1", featureId: "F1" });
+    plan.addChunk(chunk("a"));
+    service.approve("S1");
+
+    let boom = true;
+    const flakyLegs: SessionLegs = {
+      async open(sessionId) {
+        if (boom) throw new Error("transient");
+        opened.push(sessionId);
+        return { branch: `session-main-${sessionId}`, prNumber: 100, prUrl: `http://pr/${sessionId}` };
+      },
+    };
+    const flakyLoop = new SessionLoop(plan, service, CONFIG, flakyLegs);
+
+    await flakyLoop.runOnce();
+    expect(plan.getSession("S1")?.lastError).toContain("transient");
+
+    boom = false; // the hiccup clears
+    await flakyLoop.runOnce();
+    expect(plan.getSession("S1")?.lastError).toBeNull(); // cleared on the clean tick
+    expect(opened).toEqual(["S1"]);
   });
 });

@@ -21,6 +21,9 @@ export interface RunAgentOpts {
   title?: string;
   /** `sync` blocks on the reply; `wake` uses the token-free wake. Default `sync`. */
   mode?: RunMode;
+  /** Deadline (ms) for the model turn; on overrun the leg throws AgentTimeoutError, which the
+   *  daemon escalates. Unset = the client's default ceiling. */
+  timeoutMs?: number;
 }
 
 export interface AgentRun {
@@ -42,8 +45,8 @@ export async function runAgent(worktree: string, opts: RunAgentOpts): Promise<Ag
     const start = Date.now();
     const reply =
       (opts.mode ?? "sync") === "wake"
-        ? await runWake(client, sessionID, opts.prompt)
-        : (await client.sendMessage(sessionID, opts.prompt)).text;
+        ? await runWake(client, sessionID, opts.prompt, opts.timeoutMs)
+        : (await client.sendMessage(sessionID, opts.prompt, { timeoutMs: opts.timeoutMs })).text;
     const waitedMs = Date.now() - start;
 
     const tokens = await client.sessionTokens(sessionID);
@@ -55,7 +58,7 @@ export async function runAgent(worktree: string, opts: RunAgentOpts): Promise<Ag
 
 // Fire the prompt without waiting, then let the substrate poll for idle — no tokens
 // burn while the agent thinks.
-async function runWake(client: OpencodeClient, sessionID: string, prompt: string): Promise<string> {
+async function runWake(client: OpencodeClient, sessionID: string, prompt: string, timeoutMs?: number): Promise<string> {
   await client.promptAsync(sessionID, prompt);
-  return (await client.waitForReply(sessionID)).text;
+  return (await client.waitForReply(sessionID, { timeoutMs })).text;
 }

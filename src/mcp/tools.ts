@@ -86,6 +86,9 @@ export function renderFeatureStatus(s: FeatureStatus): string {
       attention.push(`${sess.session.id} awaiting your review${pr} — review/merge its PR`);
     } else if (sess.escalations.length > 0)
       attention.push(`${sess.session.id} has ${sess.escalations.length} escalation(s) to route`);
+    // A recurring session-loop tick error (the loop caught it and kept going) — surface it so
+    // the chief notices a stuck session it may want to abandon, rather than only in the logs.
+    if (sess.session.lastError) attention.push(`${sess.session.id} tick error: ${sess.session.lastError}`);
   }
   if (attention.length > 0) lines.push(`NEEDS ATTENTION: ${attention.join("; ")}`);
 
@@ -100,7 +103,8 @@ export function renderFeatureStatus(s: FeatureStatus): string {
     }
     if (sess.escalations.length > 0) {
       lines.push(`  Parked escalations (${sess.escalations.length}) — need routing:`);
-      for (const e of sess.escalations) lines.push(`    ${e.chunkId} → ${e.kind} (dispatch ${e.dispatchId})`);
+      for (const e of sess.escalations)
+        lines.push(`    ${e.chunkId} → ${e.kind} (dispatch ${e.dispatchId})${e.reason ? ` — ${e.reason}` : ""}`);
     }
     const r = sess.readout;
     lines.push(

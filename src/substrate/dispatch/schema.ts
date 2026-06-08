@@ -53,6 +53,10 @@ export const dispatches = sqliteTable("dispatches", {
   route: text("route"),
   amendRounds: integer("amend_rounds").notNull().default(0),
   escalated: text("escalated", { enum: ESCALATIONS }),
+  // Free-text "why" for the escalation (ADR 0008/0020 robustness) — e.g. "agent timed out
+  // after 600000ms". The `escalated` kind is the routing class; this is the human-readable
+  // reason `status` surfaces. Null when not escalated, or escalated without a recorded reason.
+  escalationReason: text("escalation_reason"),
   buildCostUsd: real("build_cost_usd"),
   reviewCostUsd: real("review_cost_usd"),
   amendCostUsd: real("amend_cost_usd"),

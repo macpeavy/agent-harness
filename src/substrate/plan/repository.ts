@@ -11,7 +11,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { and, asc, eq, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import {
@@ -261,6 +261,48 @@ export class PlanRepository {
     const row = this.db.select({ id: sessions.id }).from(sessions).where(eq(sessions.id, id)).get();
     if (!row) throw new Error(`no session ${id}`);
     this.db.update(sessions).set({ ...values, updatedAt: Date.now() }).where(eq(sessions.id, id)).run();
+  }
+
+  /** Record the most recent session-loop tick error against a session (ADR 0020 robustness) —
+   *  so it surfaces in `status` without terminally failing the session (it still retries). */
+  setSessionError(id: string, message: string): void {
+    this.db.update(sessions).set({ lastError: message, updatedAt: Date.now() }).where(eq(sessions.id, id)).run();
+  }
+
+  /** Clear a session's recorded tick error (the next clean tick). */
+  clearSessionError(id: string): void {
+    this.db.update(sessions).set({ lastError: null, updatedAt: Date.now() }).where(eq(sessions.id, id)).run();
+  }
+
+  /**
+   * Abandon a feature and its whole sub-plan — the operator kill switch (the abandon CLI, ADR
+   * 0009/0019). Force-transitions the feature, its sessions, and their chunks to terminal
+   * `abandoned`, in one transaction, bypassing the normal state graph deliberately (an operator
+   * kills from whatever state things are in). Idempotent: re-running on an already-abandoned
+   * feature is a harmless no-op-equivalent. Returns the feature's sessions (id + branch + PR) so
+   * the caller can close the PRs and delete the branches; the linked dispatches are the dispatch
+   * repo's to abandon (the service coordinates — the repos stay independent, ADR 0017).
+   */
+  abandonFeature(featureId: string): { id: string; branch: string | null; prNumber: number | null }[] {
+    return this.db.transaction((tx) => {
+      const feature = tx.select({ id: features.id }).from(features).where(eq(features.id, featureId)).get();
+      if (!feature) throw new Error(`no feature ${featureId}`);
+
+      const sessionRows = tx
+        .select({ id: sessions.id, branch: sessions.branch, prNumber: sessions.prNumber })
+        .from(sessions)
+        .where(eq(sessions.featureId, featureId))
+        .all();
+      const sessionIds = sessionRows.map((s) => s.id);
+
+      const now = Date.now();
+      if (sessionIds.length > 0)
+        tx.update(chunks).set({ state: "abandoned", updatedAt: now }).where(inArray(chunks.sessionId, sessionIds)).run();
+      tx.update(sessions).set({ state: "abandoned", updatedAt: now }).where(eq(sessions.featureId, featureId)).run();
+      tx.update(features).set({ state: "abandoned", updatedAt: now }).where(eq(features.id, featureId)).run();
+
+      return sessionRows;
+    });
   }
 
   // --- chunks ---

@@ -79,6 +79,7 @@ export async function runReviewLeg(target: ReviewTarget, config: SubstrateConfig
       agent: config.reviewerAgent,
       prompt,
       mode: "wake",
+      timeoutMs: config.agentTimeoutMs,
     });
 
     return {

@@ -9,6 +9,7 @@ import type { AmendResult } from "./legs/amend";
 import type { MergeResult, MergeTarget } from "./legs/merge";
 import type { SubstrateConfig } from "../config";
 import { DispatchRepository } from "../substrate/dispatch";
+import { AgentTimeoutError } from "../opencode/client";
 
 const CONFIG: SubstrateConfig = {
   repoPath: "/repo",
@@ -18,6 +19,7 @@ const CONFIG: SubstrateConfig = {
   builderStrongAgent: "builder-strong",
   reviewerAgent: "reviewer",
   amendCap: 3,
+  agentTimeoutMs: 600_000,
 };
 
 const ISSUE: Issue = { id: "ISSUE-1", title: "Add a thing", body: "Do the thing." };
@@ -288,6 +290,25 @@ describe("parked dispatches", () => {
     expect(repo.get("d1")?.state).toBe("escalated");
     expect(rec.build).toHaveLength(0);
     expect(rec.review).toHaveLength(0);
+  });
+});
+
+describe("build timeout (ADR 0020 robustness)", () => {
+  it("escalates a build timeout (parked, attended) with the reason — not a terminal fail", async () => {
+    enqueue("d1");
+    // A leg set whose build times out instead of returning.
+    const { legs } = fakeLegs();
+    legs.build = async () => {
+      throw new AgentTimeoutError("ses_build", 600_000);
+    };
+
+    const driven = await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    expect(driven).toBe(1); // handled, the loop survived
+    const d = repo.get("d1");
+    expect(d?.state).toBe("escalated"); // parked for the chief, not failed
+    expect(d?.escalated).toBe("attended");
+    expect(d?.escalationReason).toContain("did not reply within 600000ms"); // status shows the timeout
   });
 });
 

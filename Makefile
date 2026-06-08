@@ -20,6 +20,10 @@
 #   make migrate → apply the substrate DB migrations once (up runs this before the panes)
 #   make db      → regenerate Drizzle migrations from the schema
 #
+# Operator:
+#   make abandon FEATURE=<id> → kill a feature: its sessions/chunks/dispatches → abandoned,
+#                               close its open PRs, delete its branches (idempotent)
+#
 # Prereqs: tmux, bun, opencode, the litellm .venv (config/README.md), and .env (.env.example).
 
 GATEWAY_PORT ?= 4000
@@ -42,7 +46,7 @@ LOADENV := set -a; source .env; set +a;
 # proportionally on attach, ballooning the strip. tput reads the terminal `make up` runs in.
 SIZE := -x $$(tput cols 2>/dev/null || echo 200) -y $$(tput lines 2>/dev/null || echo 50)
 
-.PHONY: up down gateway daemon session-loop chief check migrate db
+.PHONY: up down gateway daemon session-loop chief check migrate db abandon
 
 up: migrate
 	@if tmux has-session -t $(SESSION) 2>/dev/null; then \
@@ -81,6 +85,11 @@ chief:
 # OFF) never race each other migrating the same SQLite file (ADR 0016 refinement).
 migrate:
 	bash -c '$(LOADENV) bun run migrate'
+
+# Operator kill switch: make abandon FEATURE=<featureId>
+abandon:
+	@test -n "$(FEATURE)" || { echo "usage: make abandon FEATURE=<featureId>"; exit 1; }
+	bash -c '$(LOADENV) bun run src/cli/abandon.ts $(FEATURE)'
 
 check:
 	bun run typecheck

@@ -279,6 +279,55 @@ describe("addressReview (owner-review → amend, ADR 0020 slice 4b)", () => {
   });
 });
 
+describe("abandonFeature (the operator kill switch, ADR 0009/0019)", () => {
+  it("transitions the feature + its sessions + chunks + dispatches to abandoned, returning the PRs", () => {
+    decompose([chunk("a"), chunk("b")]);
+    plan.linkSessionPr("S1", { branch: "session-main-S1", prNumber: 9, prUrl: "http://pr/9" });
+    service.dispatchReady("S1"); // a, b dispatched
+
+    const result = service.abandonFeature("F1");
+
+    expect(result.alreadyAbandoned).toBe(false);
+    expect(result.dispatchesAbandoned).toBe(2);
+    expect(result.sessions).toEqual([{ id: "S1", branch: "session-main-S1", prNumber: 9 }]);
+    expect(plan.getFeature("F1")?.state).toBe("abandoned");
+    expect(plan.getSession("S1")?.state).toBe("abandoned");
+    expect(plan.getChunk("a")?.state).toBe("abandoned");
+    expect(plan.getChunk("b")?.state).toBe("abandoned");
+    expect(dispatch.get("a")?.state).toBe("abandoned");
+    expect(dispatch.get("b")?.state).toBe("abandoned");
+  });
+
+  it("works from any state — including a chunk already done/escalated", () => {
+    decompose([chunk("a"), chunk("b")]);
+    service.dispatchReady("S1");
+    driveTo("a", "done");
+    driveTo("b", "escalated");
+    service.recordOutcomes("S1");
+
+    service.abandonFeature("F1");
+    expect(plan.getChunk("a")?.state).toBe("abandoned"); // was done
+    expect(plan.getChunk("b")?.state).toBe("abandoned"); // was escalated
+    expect(dispatch.get("a")?.state).toBe("abandoned");
+  });
+
+  it("is idempotent — a second abandon is a no-op", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1");
+    service.abandonFeature("F1");
+
+    const second = service.abandonFeature("F1");
+    expect(second.alreadyAbandoned).toBe(true);
+    expect(second.sessions).toEqual([]);
+    expect(second.dispatchesAbandoned).toBe(0);
+    expect(plan.getFeature("F1")?.state).toBe("abandoned");
+  });
+
+  it("throws for an unknown feature", () => {
+    expect(() => service.abandonFeature("ghost")).toThrow("no feature ghost");
+  });
+});
+
 describe("promote", () => {
   it("marks an escalated chunk strong and re-dispatches it on a fresh id", () => {
     decompose([chunk("a")]);
@@ -354,7 +403,7 @@ describe("status (feature → sessions → chunks)", () => {
     driveTo("a", "escalated");
 
     const s = service.status("F1");
-    expect(s.sessions[0]?.escalations).toEqual([{ chunkId: "a", dispatchId: "a", kind: "re-decompose" }]);
+    expect(s.sessions[0]?.escalations).toEqual([{ chunkId: "a", dispatchId: "a", kind: "re-decompose", reason: null }]);
   });
 });
 
