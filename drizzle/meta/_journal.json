@@ -29,6 +29,13 @@
       "when": 1780877305747,
       "tag": "0003_lethal_wasp",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1780878762311,
+      "tag": "0004_boring_medusa",
+      "breakpoints": true
     }
   ]
 }

@@ -164,6 +164,12 @@ export class PlanRepository {
     return this.db.select().from(chunks).where(eq(chunks.featureId, featureId)).orderBy(asc(chunks.createdAt)).all();
   }
 
+  /** Every chunk across all features — what a global sweep (the terminal reaper) needs to
+   *  know which dispatch ids are still the current attempt for some chunk. */
+  listAllChunks(): Chunk[] {
+    return this.db.select().from(chunks).orderBy(asc(chunks.createdAt)).all();
+  }
+
   /** A feature's dependency edges as from→to pairs — what the service needs to validate a
    *  re-decomposition's projected graph (it never reaches into the edges table itself). */
   listEdges(featureId: string): { from: string; to: string }[] {

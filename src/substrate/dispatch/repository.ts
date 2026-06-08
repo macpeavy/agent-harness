@@ -195,6 +195,11 @@ export class DispatchRepository {
     this.patch(id, { amendRounds: sql`${dispatches.amendRounds} + 1` });
   }
 
+  /** Stamp a dispatch as reaped (the terminal reaper cleaned its abandoned resources). */
+  markReaped(id: string): void {
+    this.patch(id, { reapedAt: Date.now() });
+  }
+
   /** Close the underlying db handle. */
   close(): void {
     this.sqlite.close();

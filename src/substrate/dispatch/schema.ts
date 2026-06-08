@@ -48,6 +48,10 @@ export const dispatches = sqliteTable("dispatches", {
   amendCostUsd: real("amend_cost_usd"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
+  // When the terminal reaper cleaned this dispatch's abandoned resources (sessions and/or
+  // its remote branch) — null until reaped. The sweep skips already-reaped rows, so a
+  // repeated janitor doesn't re-issue deletes; also an audit trail (ADR 0009/0019).
+  reapedAt: integer("reaped_at"),
 });
 
 /** A persisted dispatch row, camelCase, inferred from the schema. */

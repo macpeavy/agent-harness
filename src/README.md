@@ -13,9 +13,10 @@ Intended early module shape (refine as built):
 src/
   index.ts            # entrypoint / CLI for the substrate
   opencode/           # generated typed client + thin wrappers over the REST API
-  dispatch/           # issue → branch → build-leg; the plan→dispatch service + daemon
+  dispatch/           # issue → branch → build-leg; the plan→dispatch service + daemon + reaper
   substrate/          # bounded contexts (dispatch registry, plan) — model/schema/repository (ADR 0017)
-  mcp/                # the substrate MCP server — status/dispatch tools the chief calls (ADR 0019)
+  mcp/                # the substrate MCP server — decompose/dispatch/status/promote/redecompose (ADR 0019)
+  cli/                # owner/operator entrypoints (e.g. reap — sweep dead sessions + branches)
   wake/               # idle detection + prompt_async wake driver
   github/             # gh/git plumbing, PR creation, merge gate
 ```
