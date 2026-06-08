@@ -43,6 +43,13 @@
       "when": 1780885490474,
       "tag": "0005_glossy_albert_cleary",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1780921525419,
+      "tag": "0006_colossal_sentinel",
+      "breakpoints": true
     }
   ]
 }

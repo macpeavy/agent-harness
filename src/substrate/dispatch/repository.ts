@@ -44,6 +44,8 @@ export interface CreateDispatch {
   skills?: string[];
   /** The build tier (ADR 0013/0014) — cheap by default, strong for a tier-hinted/promoted chunk. */
   tier?: BuildTier;
+  /** The session-main branch this chunk builds off and merges into on clean review (ADR 0020). */
+  sessionBranch?: string;
   route?: string;
 }
 
@@ -129,6 +131,7 @@ export class DispatchRepository {
         surface: rec.surface ?? null,
         skills: rec.skills ?? null,
         tier: rec.tier ?? null,
+        sessionBranch: rec.sessionBranch ?? null,
         state: "queued",
         route: rec.route ?? null,
         amendRounds: 0,

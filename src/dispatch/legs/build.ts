@@ -24,6 +24,8 @@ export interface Issue {
   skills?: string[];
   /** Build tier (ADR 0013/0014): 'strong' routes to the strong builder agent; cheap by default. */
   tier?: "cheap" | "strong";
+  /** The session-main branch to build off (ADR 0020); falls back to `main` when unset. */
+  sessionBranch?: string;
 }
 
 /**
@@ -76,9 +78,11 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
   await removeWorktree(config.repoPath, worktree);
   await $`git -C ${config.repoPath} branch -D ${branch}`.nothrow().quiet();
 
-  // 1. Isolated worktree on a fresh branch off the latest origin/main.
-  await $`git -C ${config.repoPath} fetch origin main`.quiet();
-  await $`git -C ${config.repoPath} worktree add ${worktree} -b ${branch} origin/main`.quiet();
+  // 1. Isolated worktree on a fresh branch off the session-main branch (ADR 0020) — or off
+  //    main when there's no session (legacy / standalone build).
+  const base = issue.sessionBranch ?? "main";
+  await $`git -C ${config.repoPath} fetch origin ${base}`.quiet();
+  await $`git -C ${config.repoPath} worktree add ${worktree} -b ${branch} origin/${base}`.quiet();
   // Install deps so the builder can typecheck/test its own work in-worktree.
   await $`bun install`.cwd(worktree).quiet();
 
@@ -114,24 +118,19 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
       };
     }
 
-    // 4. Substrate owns git + GitHub.
+    // 4. Substrate owns git. The chunk branch is pushed so the review + merge legs can
+    //    fetch it; NO per-chunk PR (ADR 0020) — the chunk squash-merges into session-main
+    //    on a clean review, and the one session PR is the review surface.
     const commitMsg = `feat: ${issue.title} (${issue.id})`;
     await $`git -C ${worktree} add -A`.quiet();
     await $`git -C ${worktree} commit -q -m ${commitMsg}`;
     await $`git -C ${worktree} push -u origin ${branch}`.quiet();
-    const prBody =
-      `Built by the \`${agent}\` builder route and dispatched by the substrate.\n\n` +
-      `**Issue ${issue.id}:** ${issue.title}\n\n${issue.body}`;
-    const prUrl = (
-      await $`gh pr create --repo ${config.ghRepo} --head ${branch} --base main --title ${commitMsg} --body ${prBody}`.text()
-    ).trim();
 
     return {
       branch,
       worktree,
       changed: true,
       reply: run.reply,
-      prUrl,
       route: agent,
       buildSessionId: run.sessionId,
       tokens: run.tokens,

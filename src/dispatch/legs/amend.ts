@@ -1,10 +1,10 @@
 // The amend leg (service layer) — one amend round (ADR 0008).
 //
-// Given a PR branch with blocking review findings, check out that branch in a worktree,
+// Given a chunk branch with blocking review findings, check out that branch in a worktree,
 // re-dispatch the builder (sync) with the findings as the amend prompt, and — if it
-// changed anything — commit and push to the SAME branch, updating the PR. One round
-// only: the daemon owns the cap loop, the re-review, and the escalation. Returns its
-// result; the daemon persists the amend round + cost (the leg holds no registry/SQL).
+// changed anything — commit and push to the SAME branch (the chunk re-reviews, then merges
+// into session-main on a clean pass, ADR 0020). One round only: the daemon owns the cap
+// loop, the re-review, and the escalation. Returns its result; the daemon persists the round.
 
 import { $ } from "bun";
 import { mkdirSync } from "node:fs";
@@ -27,7 +27,7 @@ export async function runAmendLeg(
   config: SubstrateConfig,
 ): Promise<AmendResult> {
   mkdirSync(config.worktreeRoot, { recursive: true });
-  const worktree = join(config.worktreeRoot, `amend-${target.pr}`);
+  const worktree = join(config.worktreeRoot, `amend-${target.branch.replace(/[^a-zA-Z0-9]+/g, "-")}`);
 
   // Idempotent: clear any prior worktree, then check out the PR branch so we can commit
   // and push back to it. --force is defensive: the legs clean up their worktrees, but a
@@ -42,10 +42,10 @@ export async function runAmendLeg(
   try {
     const prompt =
       `A reviewer raised blocking findings on your change. Address them by editing files in ` +
-      `the current working directory, then typecheck/test. Do NOT run git or touch the PR — ` +
-      `the substrate handles version control.\n\nReview findings:\n\n${findings}`;
+      `the current working directory, then typecheck/test. Do NOT run git — the substrate ` +
+      `handles version control.\n\nReview findings:\n\n${findings}`;
     const run = await runAgent(worktree, {
-      title: `amend PR #${target.pr}`,
+      title: `amend ${target.branch}`,
       agent: config.builderAgent,
       prompt,
       mode: "sync",
@@ -57,8 +57,8 @@ export async function runAmendLeg(
       return { changed: false, reply: run.reply, route: config.builderAgent, tokens: run.tokens };
     }
 
-    // Push the fix onto the same branch — the PR updates in place.
-    const commitMsg = `fix: address review findings (PR #${target.pr})`;
+    // Push the fix onto the same chunk branch — it re-reviews, then merges into session-main.
+    const commitMsg = `fix: address review findings (${target.branch})`;
     await $`git -C ${worktree} add -A`.quiet();
     await $`git -C ${worktree} commit -q -m ${commitMsg}`;
     await $`git -C ${worktree} push origin ${target.branch}`.quiet();
