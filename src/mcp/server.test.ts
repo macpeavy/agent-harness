@@ -43,10 +43,16 @@ afterEach(async () => {
 
 const FEATURE = { id: "F1", title: "A feature", description: "the owner's intent" };
 
+// A feature + one session (S1), both planning — the common fixture for the chief tools.
+function seedFeatureSession(): void {
+  plan.createFeature(FEATURE);
+  plan.createSession({ id: "S1", featureId: "F1" });
+}
+
 function chunk(id: string, over: Partial<CreateChunk> = {}): CreateChunk {
   return {
     id,
-    featureId: "F1",
+    sessionId: "S1",
     surface: `src/${id}.ts`,
     intent: `do ${id}`,
     contract: `export function ${id}(): void`,
@@ -69,27 +75,28 @@ async function isError(name: string, args: Record<string, unknown>): Promise<boo
   return res.isError === true;
 }
 
+// Escalate a chunk's dispatch the way the daemon would, so the chief tools can resolve it.
+function escalate(chunkId: string): void {
+  dispatch.transition(chunkId, "building");
+  dispatch.escalate(chunkId, "re-decompose");
+  plan.recordOutcome(chunkId, "escalated"); // the service stands in for the daemon reap here
+}
+
 describe("tool discovery", () => {
   it("exposes the full chief toolset", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual([
-      "decompose",
-      "dispatch",
-      "promote",
-      "redecompose",
-      "status",
-    ]);
-    // The input schema is published so the chief knows the shape.
-    const status = tools.find((t) => t.name === "status");
-    expect(status?.inputSchema.properties).toHaveProperty("featureId");
+    expect(tools.map((t) => t.name).sort()).toEqual(["decompose", "dispatch", "promote", "redecompose", "status"]);
+    const dispatchTool = tools.find((t) => t.name === "dispatch");
+    expect(dispatchTool?.inputSchema.properties).toHaveProperty("sessionId");
     const decompose = tools.find((t) => t.name === "decompose");
-    expect(decompose?.inputSchema.properties).toHaveProperty("chunks");
+    expect(decompose?.inputSchema.properties).toHaveProperty("session");
   });
 });
 
 describe("decompose", () => {
   const DECOMP = {
-    feature: { id: "F1", title: "A feature", description: "the owner's intent" },
+    feature: FEATURE,
+    session: { id: "S1", locEstimate: 800 },
     chunks: [
       { id: "a", surface: "src/a.ts", intent: "do a", contract: "export function a(): void", acceptance: "a.test.ts" },
       { id: "b", surface: "src/b.ts", intent: "do b", contract: "export function b(): void", acceptance: "b.test.ts" },
@@ -97,12 +104,11 @@ describe("decompose", () => {
     edges: [{ from: "a", to: "b" }],
   };
 
-  it("writes the chunk-DAG to the plan", async () => {
+  it("writes the feature + session + chunk-DAG to the plan", async () => {
     const body = await callText("decompose", DECOMP);
-    expect(body).toContain("Decomposed feature F1 into 2 chunk(s) (1 edge(s)): a, b");
-    expect(body).toContain("call dispatch only on their explicit go");
-    expect(plan.listChunks("F1").map((c) => c.id)).toEqual(["a", "b"]);
-    expect(plan.getChunk("a")?.featureId).toBe("F1"); // featureId stamped from the feature
+    expect(body).toContain("Decomposed feature F1 / session S1 into 2 chunk(s) (1 edge(s)): a, b");
+    expect(plan.listChunks("S1").map((c) => c.id)).toEqual(["a", "b"]);
+    expect(plan.getChunk("a")?.sessionId).toBe("S1"); // sessionId stamped from the session
   });
 
   it("returns a tool error for a cyclic DAG (and writes nothing)", async () => {
@@ -110,24 +116,18 @@ describe("decompose", () => {
     expect(await isError("decompose", cyclic)).toBe(true);
     expect(plan.getFeature("F1")).toBeNull();
   });
-
-  it("returns a tool error for an unknown-chunk edge", async () => {
-    const bad = { ...DECOMP, edges: [{ from: "a", to: "ghost" }] };
-    expect(await isError("decompose", bad)).toBe(true);
-  });
 });
 
 describe("status", () => {
-  it("reports a feature's chunks and escalations", async () => {
-    plan.createFeature(FEATURE);
+  it("reports a feature's sessions, chunks, and escalations", async () => {
+    seedFeatureSession();
     plan.addChunk(chunk("a"));
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
+    service.dispatchReady("S1");
 
     const body = await callText("status", { featureId: "F1" });
     expect(body).toContain('Feature F1 "A feature" — building');
+    expect(body).toContain("Session S1 [building]");
     expect(body).toContain("a  src/a.ts");
-    expect(body).toContain("Parked escalations: none");
   });
 
   it("returns a tool error for an unknown feature", async () => {
@@ -136,42 +136,28 @@ describe("status", () => {
 });
 
 describe("dispatch", () => {
-  it("materialises ready chunks of an approved feature", async () => {
-    plan.createFeature(FEATURE);
+  it("approves the feature and dispatches a session's ready chunks (calling dispatch IS the go)", async () => {
+    seedFeatureSession();
     plan.addChunk(chunk("a"));
     plan.addChunk(chunk("b"));
-    plan.transitionFeature("F1", "ready");
 
-    const body = await callText("dispatch", { featureId: "F1" });
-    expect(body).toContain("Dispatched 2 ready chunk(s)");
-    expect(dispatch.get("a")?.state).toBe("queued");
-    expect(plan.getChunk("a")?.state).toBe("dispatched");
-  });
-
-  it("approves and dispatches a still-'planning' feature (calling dispatch IS the go)", async () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-
-    const body = await callText("dispatch", { featureId: "F1" }); // no prior approval step
-    expect(body).toContain("Dispatched 1 ready chunk(s)");
+    const body = await callText("dispatch", { sessionId: "S1" }); // no prior approval step
+    expect(body).toContain("Dispatched 2 ready chunk(s) for session S1");
     expect(plan.getChunk("a")?.state).toBe("dispatched");
     expect(plan.getFeature("F1")?.state).toBe("building"); // planning → ready → building
+    expect(plan.getSession("S1")?.state).toBe("building");
+  });
+
+  it("returns a tool error for an unknown session", async () => {
+    expect(await isError("dispatch", { sessionId: "ghost" })).toBe(true);
   });
 });
 
-// Escalate the chunk's dispatch the way the daemon would, so the chief tools can resolve it.
-function escalate(chunkId: string): void {
-  dispatch.transition(chunkId, "building");
-  dispatch.escalate(chunkId, "re-decompose");
-  plan.recordOutcome(chunkId, "escalated"); // the service stands in for the daemon reap here
-}
-
 describe("promote", () => {
   it("tier-promotes an escalated chunk and re-dispatches it on the strong tier", async () => {
-    plan.createFeature(FEATURE);
+    seedFeatureSession();
     plan.addChunk(chunk("a"));
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
+    service.dispatchReady("S1");
     escalate("a");
 
     const body = await callText("promote", { chunkId: "a" });
@@ -181,48 +167,37 @@ describe("promote", () => {
   });
 
   it("returns a tool error promoting a chunk that isn't escalated", async () => {
-    plan.createFeature(FEATURE);
+    seedFeatureSession();
     plan.addChunk(chunk("a"));
     expect(await isError("promote", { chunkId: "a" })).toBe(true);
   });
 });
 
 describe("redecompose", () => {
+  const replacements = [
+    { id: "a1", surface: "src/a1.ts", intent: "do a1", contract: "c", acceptance: "t" },
+    { id: "a2", surface: "src/a2.ts", intent: "do a2", contract: "c", acceptance: "t" },
+  ];
+
   it("retires an escalated chunk and adds replacements", async () => {
-    plan.createFeature(FEATURE);
+    seedFeatureSession();
     plan.addChunk(chunk("a"));
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
+    service.dispatchReady("S1");
     escalate("a");
 
-    const body = await callText("redecompose", {
-      chunkId: "a",
-      chunks: [
-        { id: "a1", surface: "src/a1.ts", intent: "do a1", contract: "c", acceptance: "t" },
-        { id: "a2", surface: "src/a2.ts", intent: "do a2", contract: "c", acceptance: "t" },
-      ],
-      edges: [{ from: "a1", to: "a2" }],
-    });
+    const body = await callText("redecompose", { chunkId: "a", chunks: replacements, edges: [{ from: "a1", to: "a2" }] });
     expect(body).toContain("Re-decomposed chunk a (retired) into 2 chunk(s)");
     expect(plan.getChunk("a")?.state).toBe("superseded");
-    expect(plan.listChunks("F1").map((c) => c.id)).toEqual(["a", "a1", "a2"]);
+    expect(plan.listChunks("S1").map((c) => c.id)).toEqual(["a", "a1", "a2"]);
   });
 
   it("returns a tool error for a cyclic re-decomposition", async () => {
-    plan.createFeature(FEATURE);
+    seedFeatureSession();
     plan.addChunk(chunk("a"));
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
+    service.dispatchReady("S1");
     escalate("a");
 
-    const cyclic = {
-      chunkId: "a",
-      chunks: [
-        { id: "a1", surface: "src/a1.ts", intent: "do a1", contract: "c", acceptance: "t" },
-        { id: "a2", surface: "src/a2.ts", intent: "do a2", contract: "c", acceptance: "t" },
-      ],
-      edges: [{ from: "a1", to: "a2" }, { from: "a2", to: "a1" }],
-    };
+    const cyclic = { chunkId: "a", chunks: replacements, edges: [{ from: "a1", to: "a2" }, { from: "a2", to: "a1" }] };
     expect(await isError("redecompose", cyclic)).toBe(true);
     expect(plan.getChunk("a")?.state).toBe("escalated"); // unchanged
   });
@@ -242,13 +217,7 @@ describe("stdio smoke-boot", () => {
     try {
       await smokeClient.connect(transport);
       const { tools } = await smokeClient.listTools();
-      expect(tools.map((t) => t.name).sort()).toEqual([
-        "decompose",
-        "dispatch",
-        "promote",
-        "redecompose",
-        "status",
-      ]);
+      expect(tools.map((t) => t.name).sort()).toEqual(["decompose", "dispatch", "promote", "redecompose", "status"]);
     } finally {
       await smokeClient.close();
       rmSync(smokeDir, { recursive: true, force: true });

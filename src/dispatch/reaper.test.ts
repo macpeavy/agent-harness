@@ -23,6 +23,7 @@ beforeEach(() => {
     deleteBranch: async (b) => void reaped.branches.push(b),
   };
   plan.createFeature({ id: "F1", title: "F", description: "d" });
+  plan.createSession({ id: "S1", featureId: "F1" });
 });
 
 afterEach(() => {
@@ -33,7 +34,7 @@ afterEach(() => {
 
 // Create a dispatch linked as chunk `id`'s current attempt, with sessions set.
 function linkedDispatch(id: string): void {
-  plan.addChunk({ id, featureId: "F1", surface: `src/${id}.ts`, intent: id, contract: "c", acceptance: "t" });
+  plan.addChunk({ id, sessionId: "S1", surface: `src/${id}.ts`, intent: id, contract: "c", acceptance: "t" });
   dispatch.create({ id, issueId: id, title: id, branch: `agent/${id}`, spec: "s" });
   dispatch.setSessions(id, { buildSessionId: `ses_b_${id}`, reviewSessionId: `ses_r_${id}` });
   plan.linkDispatch(id, id);
