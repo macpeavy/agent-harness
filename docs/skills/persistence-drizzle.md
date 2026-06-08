@@ -29,7 +29,11 @@ the engine/repository/service/router layering.
 2. **Generate migrations, don't hand-write DDL.** `drizzle.config.ts` points at the schema;
    `bun run db:generate` (drizzle-kit) emits SQL into `drizzle/`. Commit it — migrations are
    source. The store applies them at startup: `migrate(db, { migrationsFolder })` in the
-   constructor, so a fresh db self-initializes and a restart picks up new migrations.
+   constructor (gated on an `opts.migrate` default-true), so a fresh db self-initializes.
+   **But** a long-running process that shares a db with another (the daemon + the
+   session-loop both open the dispatch db) must construct with **`migrate: false`** — two
+   processes migrating one SQLite file at once race and one crashes. The launch migrates
+   once up front (`make migrate`); those processes open the migrated db (ADR 0021).
 3. **Query through the builder — no SQL strings.** `db.select().from(t).where(eq(t.id, id))`,
    `db.insert(t).values(...)`, `db.update(t).set(...).where(...)`. The only allowed `sql`
    fragments are for things SQLite exposes but the schema doesn't model — an in-place
