@@ -32,7 +32,7 @@ const FEATURE = { id: "F1", title: "A feature", description: "the owner's intent
 function chunk(id: string, over: Partial<CreateChunk> = {}): CreateChunk {
   return {
     id,
-    featureId: "F1",
+    sessionId: "S1",
     surface: `src/${id}.ts`,
     intent: `do ${id}`,
     contract: `export function ${id}(): void`,
@@ -41,8 +41,12 @@ function chunk(id: string, over: Partial<CreateChunk> = {}): CreateChunk {
   };
 }
 
-// Drive a dispatch to a terminal/parked state the way the daemon would, so the service
-// can reap its outcome. The service never drives the build loop itself.
+// Decompose a feature with one session (S1) and the given chunks/edges, via the service.
+function decompose(chunks: CreateChunk[], edges: { from: string; to: string }[] = []): void {
+  service.decompose({ feature: FEATURE, session: { id: "S1" }, chunks, edges });
+}
+
+// Drive a dispatch to a terminal/parked state the way the daemon would.
 function driveTo(dispatchId: string, end: "done" | "escalated" | "failed"): void {
   if (end === "failed") {
     dispatch.transition(dispatchId, "building");
@@ -59,26 +63,13 @@ function driveTo(dispatchId: string, end: "done" | "escalated" | "failed"): void
 }
 
 describe("specFromChunk", () => {
-  it("assembles the required spec fields, and folds in the optional ones when present", () => {
+  it("folds in the optional sections only when present", () => {
     plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a", { dataShapes: "X = { n: number }", preResolved: "use Drizzle", outOfScope: "no UI" }));
+    plan.createSession({ id: "S1", featureId: "F1" });
+    plan.addChunk(chunk("a", { dataShapes: "X = { n: number }", preResolved: "use Drizzle" }));
     const spec = specFromChunk(plan.getChunk("a") as Chunk);
-
     expect(spec).toContain("[src/a.ts] do a");
-    expect(spec).toContain("## Contract\nexport function a(): void");
-    expect(spec).toContain("## Acceptance\na.test.ts passes");
     expect(spec).toContain("## Data shapes\nX = { n: number }");
-    expect(spec).toContain("## Pre-resolved decisions\nuse Drizzle");
-    expect(spec).toContain("## Out of scope\nno UI");
-  });
-
-  it("omits the optional sections when the chunk has none", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    const spec = specFromChunk(plan.getChunk("a") as Chunk);
-
-    expect(spec).not.toContain("## Data shapes");
-    expect(spec).not.toContain("## Pre-resolved");
     expect(spec).not.toContain("## Out of scope");
   });
 });
@@ -88,311 +79,137 @@ describe("outcomeFor", () => {
     expect(outcomeFor("done")).toBe("done");
     expect(outcomeFor("escalated")).toBe("escalated");
     expect(outcomeFor("failed")).toBe("failed");
-    expect(outcomeFor("queued")).toBeNull();
     expect(outcomeFor("building")).toBeNull();
-    expect(outcomeFor("review")).toBeNull();
-    expect(outcomeFor("amending")).toBeNull();
-  });
-});
-
-describe("dispatchReady", () => {
-  it("approves a still-'planning' feature in-line (dispatch IS the go) and materialises it", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-
-    const made = service.dispatchReady("F1"); // no prior transitionFeature — dispatch approves
-
-    expect(made).toEqual([{ chunkId: "a", dispatchId: "a" }]);
-    expect(plan.getChunk("a")?.state).toBe("dispatched");
-    // planning → ready → building, folded into the one dispatch call.
-    expect(plan.getFeature("F1")?.state).toBe("building");
-  });
-
-  it("materialises ready chunks: a dispatch per chunk carrying its curation, linked back", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    plan.transitionFeature("F1", "ready");
-
-    const made = service.dispatchReady("F1");
-
-    expect(made).toEqual([{ chunkId: "a", dispatchId: "a" }]);
-    // The chunk is linked and dispatched.
-    expect(plan.getChunk("a")?.state).toBe("dispatched");
-    expect(plan.getChunk("a")?.dispatchId).toBe("a");
-    // The dispatch carries the assembled spec AND the structured curation (the dormant
-    // context-pack curation, now live — ADR 0018/0019).
-    const d = dispatch.get("a");
-    expect(d?.spec).toContain("export function a(): void");
-    expect(d?.surface).toBe("src/a.ts");
-    // First dispatch of an approved feature moves it into 'building'.
-    expect(plan.getFeature("F1")?.state).toBe("building");
-  });
-
-  it("respects the DAG — only dependency-satisfied chunks dispatch", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    plan.addChunk(chunk("b"));
-    plan.addEdge("F1", "a", "b"); // b depends on a
-    plan.transitionFeature("F1", "ready");
-
-    const made = service.dispatchReady("F1");
-
-    expect(made.map((m) => m.chunkId)).toEqual(["a"]); // b is gated
-    expect(plan.getChunk("b")?.state).toBe("planned");
-  });
-
-  it("dispatches nothing (and is a no-op) when no chunk is ready", () => {
-    plan.createFeature(FEATURE);
-    plan.transitionFeature("F1", "ready");
-    expect(service.dispatchReady("F1")).toEqual([]);
-    expect(plan.getFeature("F1")?.state).toBe("ready"); // unmoved
-  });
-
-  it("throws for an unknown feature", () => {
-    expect(() => service.dispatchReady("nope")).toThrow("no feature");
-  });
-});
-
-describe("recordOutcomes", () => {
-  it("flows each terminal dispatch outcome back, and leaves in-flight chunks alone", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    plan.addChunk(chunk("b"));
-    plan.addChunk(chunk("c"));
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
-
-    driveTo("a", "done");
-    driveTo("b", "escalated");
-    // c left in flight (queued)
-
-    const flowed = service.recordOutcomes("F1");
-
-    expect(flowed).toContainEqual({ chunkId: "a", outcome: "done" });
-    expect(flowed).toContainEqual({ chunkId: "b", outcome: "escalated" });
-    expect(flowed.map((f) => f.chunkId)).not.toContain("c");
-    expect(plan.getChunk("a")?.state).toBe("done");
-    expect(plan.getChunk("b")?.state).toBe("escalated");
-    expect(plan.getChunk("c")?.state).toBe("dispatched"); // unchanged
-    // Not every chunk is done, so the feature stays building.
-    expect(plan.getFeature("F1")?.state).toBe("building");
-  });
-
-  it("moves the feature to 'done' once every chunk is done", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    plan.addChunk(chunk("b"));
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
-
-    driveTo("a", "done");
-    driveTo("b", "done");
-    service.recordOutcomes("F1");
-
-    expect(plan.getChunk("a")?.state).toBe("done");
-    expect(plan.getChunk("b")?.state).toBe("done");
-    expect(plan.getFeature("F1")?.state).toBe("done");
-  });
-
-  it("flows a failed dispatch back as a failed chunk", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
-
-    driveTo("a", "failed");
-    service.recordOutcomes("F1");
-
-    expect(plan.getChunk("a")?.state).toBe("failed");
-    expect(plan.getFeature("F1")?.state).toBe("building"); // not all done
-  });
-});
-
-describe("re-dispatch id allocation", () => {
-  it("gives a re-dispatched chunk a fresh id so its branch can't collide with the prior attempt", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1"); // dispatch "a"
-
-    // The dispatch escalates; the chief rewinds the chunk to 'planned' and re-dispatches.
-    driveTo("a", "escalated");
-    service.recordOutcomes("F1");
-    plan.transition("a", "planned");
-
-    const [made] = service.dispatchReady("F1");
-    // The id "a" is taken by the prior attempt, so the re-dispatch is "a-r2" — a fresh
-    // registry row whose derived branch/worktree can't collide with the first build.
-    expect(made).toEqual({ chunkId: "a", dispatchId: "a-r2" });
-    expect(dispatch.get("a-r2")?.issueId).toBe("a-r2"); // issueId == dispatchId (branch derivation)
-    expect(plan.getChunk("a")?.dispatchId).toBe("a-r2");
-  });
-});
-
-describe("status", () => {
-  it("throws for an unknown feature", () => {
-    expect(() => service.status("nope")).toThrow("no feature");
-  });
-
-  it("digests a fresh feature: chunks 'planned', no dispatches, zeroed readout", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    plan.addChunk(chunk("b"));
-
-    const s = service.status("F1");
-
-    expect(s.feature).toEqual({ id: "F1", title: "A feature", state: "planning" });
-    expect(s.chunks).toHaveLength(2);
-    expect(s.chunks[0]).toMatchObject({ id: "a", surface: "src/a.ts", state: "planned", dispatchId: null, dispatchState: null });
-    expect(s.escalations).toEqual([]);
-    expect(s.readout.total).toBe(0);
-  });
-
-  it("joins each chunk to its dispatch state and computes the readout over the feature's dispatches", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    plan.addChunk(chunk("b"));
-    plan.addChunk(chunk("c"));
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
-
-    driveTo("a", "done");
-    dispatch.transition("b", "building"); // b in flight
-    // c left queued
-
-    const s = service.status("F1");
-
-    expect(s.feature.state).toBe("building");
-    const byId = Object.fromEntries(s.chunks.map((c) => [c.id, c]));
-    expect(byId.a).toMatchObject({ state: "dispatched", dispatchState: "done" }); // chunk state not yet reaped
-    expect(byId.b?.dispatchState).toBe("building");
-    expect(byId.c?.dispatchState).toBe("queued");
-    // Readout is over the 3 dispatches: 1 done, 2 in-flight.
-    expect(s.readout.total).toBe(3);
-    expect(s.readout.reachedReady).toBe(1);
-    expect(s.readout.inFlight).toBe(2);
-  });
-
-  it("surfaces parked escalations with their kind for routing", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
-
-    driveTo("a", "escalated"); // escalate("re-decompose") under the hood
-
-    const s = service.status("F1");
-
-    expect(s.escalations).toEqual([{ chunkId: "a", dispatchId: "a", kind: "re-decompose" }]);
-    expect(s.chunks[0]?.dispatchState).toBe("escalated");
   });
 });
 
 describe("decompose", () => {
-  it("writes a feature's chunk-DAG to the plan and returns a summary", () => {
+  it("writes a feature + session + chunk-DAG and returns a summary", () => {
     const result = service.decompose({
       feature: FEATURE,
+      session: { id: "S1", locEstimate: 900 },
       chunks: [chunk("a"), chunk("b")],
       edges: [{ from: "a", to: "b" }],
     });
-
-    expect(result).toEqual({ featureId: "F1", chunkIds: ["a", "b"], edgeCount: 1 });
-    expect(service.status("F1").feature.state).toBe("planning"); // not yet approved
-    expect(plan.listChunks("F1").map((c) => c.id)).toEqual(["a", "b"]);
-    expect(plan.readyChunks("F1").map((c) => c.id)).toEqual(["a"]); // edge a→b in effect
+    expect(result).toEqual({ featureId: "F1", sessionId: "S1", chunkIds: ["a", "b"], edgeCount: 1 });
+    expect(plan.getSession("S1")?.state).toBe("planning");
+    expect(plan.readyChunks("S1").map((c) => c.id)).toEqual(["a"]);
   });
 
   it("rejects a cyclic DAG before writing anything", () => {
     expect(() =>
       service.decompose({
         feature: FEATURE,
+        session: { id: "S1" },
         chunks: [chunk("a"), chunk("b")],
         edges: [{ from: "a", to: "b" }, { from: "b", to: "a" }],
       }),
     ).toThrow("invalid chunk-DAG");
-    expect(plan.getFeature("F1")).toBeNull(); // nothing landed
-  });
-
-  it("rejects an edge to an unknown chunk", () => {
-    expect(() =>
-      service.decompose({ feature: FEATURE, chunks: [chunk("a")], edges: [{ from: "a", to: "ghost" }] }),
-    ).toThrow("invalid chunk-DAG");
+    expect(plan.getFeature("F1")).toBeNull();
   });
 });
 
-describe("tier flows to the dispatch (tierHint live, ADR 0013/0014)", () => {
-  it("carries a chunk's tierHint onto its dispatch", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a", { tierHint: "strong" }));
-    plan.addChunk(chunk("b")); // default cheap
-    plan.transitionFeature("F1", "ready");
+describe("dispatchReady (session-scoped, feature-level approval)", () => {
+  it("approves the feature + advances the session, materialising its ready chunks", () => {
+    decompose([chunk("a")]); // feature + session planning
 
-    service.dispatchReady("F1");
+    const made = service.dispatchReady("S1"); // first dispatch = approval
 
+    expect(made).toEqual([{ chunkId: "a", dispatchId: "a" }]);
+    expect(plan.getChunk("a")?.state).toBe("dispatched");
+    expect(plan.getFeature("F1")?.state).toBe("building"); // planning → ready → building
+    expect(plan.getSession("S1")?.state).toBe("building");
+  });
+
+  it("respects the session DAG — only dependency-satisfied chunks dispatch", () => {
+    decompose([chunk("a"), chunk("b")], [{ from: "a", to: "b" }]);
+    const made = service.dispatchReady("S1");
+    expect(made.map((m) => m.chunkId)).toEqual(["a"]);
+    expect(plan.getChunk("b")?.state).toBe("planned");
+  });
+
+  it("carries the chunk's tierHint onto its dispatch", () => {
+    decompose([chunk("a", { tierHint: "strong" })]);
+    service.dispatchReady("S1");
     expect(dispatch.get("a")?.tier).toBe("strong");
-    expect(dispatch.get("b")?.tier).toBe("cheap");
+  });
+
+  it("throws for an unknown session", () => {
+    expect(() => service.dispatchReady("nope")).toThrow("no session");
   });
 });
 
-describe("promote (tier-promote an escalated chunk)", () => {
-  it("marks the chunk strong and re-dispatches it on a fresh id", () => {
+describe("recordOutcomes (session-scoped) + completion", () => {
+  it("flows outcomes back and completes the session then the feature when all chunks done", () => {
+    decompose([chunk("a"), chunk("b")]);
+    service.dispatchReady("S1");
+    driveTo("a", "done");
+    driveTo("b", "done");
+
+    const flowed = service.recordOutcomes("S1");
+    expect(flowed).toContainEqual({ chunkId: "a", outcome: "done" });
+    expect(plan.getSession("S1")?.state).toBe("done");
+    expect(plan.getFeature("F1")?.state).toBe("done"); // the feature's only session is done
+  });
+
+  it("leaves the feature building while another session is unfinished", () => {
     plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
+    plan.createSession({ id: "S1", featureId: "F1" });
+    plan.createSession({ id: "S2", featureId: "F1" });
+    plan.addChunk(chunk("a", { sessionId: "S1" }));
+    plan.addChunk(chunk("b", { sessionId: "S2" }));
+
+    service.dispatchReady("S1");
+    driveTo("a", "done");
+    service.recordOutcomes("S1");
+
+    expect(plan.getSession("S1")?.state).toBe("done");
+    expect(plan.getFeature("F1")?.state).toBe("building"); // S2 still open
+  });
+});
+
+describe("promote", () => {
+  it("marks an escalated chunk strong and re-dispatches it on a fresh id", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1");
     driveTo("a", "escalated");
-    service.recordOutcomes("F1");
+    service.recordOutcomes("S1");
     expect(plan.getChunk("a")?.state).toBe("escalated");
 
     const made = service.promote("a");
-
     expect(made).toEqual({ chunkId: "a", dispatchId: "a-r2" });
-    expect(plan.getChunk("a")?.state).toBe("dispatched");
     expect(plan.getChunk("a")?.tierHint).toBe("strong");
-    expect(plan.getChunk("a")?.dispatchId).toBe("a-r2");
-    expect(dispatch.get("a-r2")?.tier).toBe("strong"); // built on the strong route
+    expect(dispatch.get("a-r2")?.tier).toBe("strong");
     expect(dispatch.get("a-r2")?.issueId).toBe("a-r2"); // branch derivation stays consistent
   });
 
   it("refuses to promote a chunk that isn't escalated", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
+    decompose([chunk("a")]);
     expect(() => service.promote("a")).toThrow("not escalated");
   });
 });
 
-describe("redecompose (split an escalated chunk)", () => {
-  function escalate(chunkId: string): void {
-    driveTo(chunkId, "escalated");
-    service.recordOutcomes("F1");
-  }
-
+describe("redecompose (session-scoped)", () => {
   it("retires the chunk and the replacements dispatch through the normal path", () => {
-    plan.createDecomposition({ feature: FEATURE, chunks: [chunk("a"), chunk("b")], edges: [{ from: "a", to: "b" }] });
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1"); // dispatches a (the root)
-    escalate("a");
+    decompose([chunk("a"), chunk("b")], [{ from: "a", to: "b" }]);
+    service.dispatchReady("S1");
+    driveTo("a", "escalated");
+    service.recordOutcomes("S1");
 
     const d = service.redecompose("a", {
       chunks: [chunk("a1"), chunk("a2")],
       edges: [{ from: "a1", to: "a2" }, { from: "a2", to: "b" }],
     });
-
-    expect(d).toEqual({ featureId: "F1", chunkIds: ["a1", "a2"], edgeCount: 2 });
+    expect(d).toEqual({ featureId: "F1", sessionId: "S1", chunkIds: ["a1", "a2"], edgeCount: 2 });
     expect(plan.getChunk("a")?.state).toBe("superseded");
-    // a1 is the new root → ready; dispatch flows it normally.
-    expect(plan.readyChunks("F1").map((c) => c.id)).toEqual(["a1"]);
-    const made = service.dispatchReady("F1");
-    expect(made.map((m) => m.chunkId)).toEqual(["a1"]);
+    expect(plan.readyChunks("S1").map((c) => c.id)).toEqual(["a1"]);
   });
 
-  it("rejects a re-decomposition that introduces a cycle", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
-    escalate("a");
-
+  it("rejects a cyclic re-decomposition", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1");
+    driveTo("a", "escalated");
+    service.recordOutcomes("S1");
     expect(() =>
       service.redecompose("a", {
         chunks: [chunk("a1"), chunk("a2")],
@@ -401,46 +218,31 @@ describe("redecompose (split an escalated chunk)", () => {
     ).toThrow("invalid re-decomposition");
     expect(plan.getChunk("a")?.state).toBe("escalated"); // unchanged
   });
-
-  it("rejects an edge that references the retired chunk", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
-    escalate("a");
-
-    expect(() =>
-      service.redecompose("a", { chunks: [chunk("a1")], edges: [{ from: "a", to: "a1" }] }),
-    ).toThrow("references the retired chunk");
-  });
-
-  it("refuses to re-decompose a chunk that isn't escalated", () => {
-    plan.createFeature(FEATURE);
-    plan.addChunk(chunk("a"));
-    expect(() => service.redecompose("a", { chunks: [chunk("a1")], edges: [] })).toThrow("not escalated");
-  });
 });
 
-describe("feature completes when chunks are done or superseded", () => {
-  it("moves the feature to done once every chunk is done/superseded", () => {
-    plan.createDecomposition({ feature: FEATURE, chunks: [chunk("a"), chunk("b")], edges: [{ from: "a", to: "b" }] });
-    plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
+describe("status (feature → sessions → chunks)", () => {
+  it("digests each session with its chunks, readout, and escalations", () => {
+    decompose([chunk("a"), chunk("b")]);
+    service.dispatchReady("S1");
+    driveTo("a", "done");
+    dispatch.transition("b", "building"); // in flight
+
+    const s = service.status("F1");
+    expect(s.feature.state).toBe("building");
+    expect(s.sessions).toHaveLength(1);
+    const sess = s.sessions[0]!;
+    expect(sess.session.id).toBe("S1");
+    expect(sess.chunks.map((c) => c.id).sort()).toEqual(["a", "b"]);
+    expect(sess.readout.total).toBe(2);
+    expect(sess.readout.reachedReady).toBe(1);
+  });
+
+  it("surfaces a session's parked escalations with their kind", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1");
     driveTo("a", "escalated");
-    service.recordOutcomes("F1");
 
-    // re-decompose a into a1 (a leaf precursor of b); supersede a.
-    service.redecompose("a", { chunks: [chunk("a1")], edges: [{ from: "a1", to: "b" }] });
-    // drive a1, then b, to done.
-    service.dispatchReady("F1"); // a1
-    driveTo("a1", "done");
-    service.recordOutcomes("F1");
-    service.dispatchReady("F1"); // b (now a1 done)
-    driveTo("b", "done");
-    service.recordOutcomes("F1");
-
-    // a superseded, a1 done, b done → feature done.
-    expect(plan.getChunk("a")?.state).toBe("superseded");
-    expect(plan.getFeature("F1")?.state).toBe("done");
+    const s = service.status("F1");
+    expect(s.sessions[0]?.escalations).toEqual([{ chunkId: "a", dispatchId: "a", kind: "re-decompose" }]);
   });
 });

@@ -13,8 +13,8 @@ import { DispatchRepository } from "../substrate/dispatch";
 import { PlanDispatchService } from "../dispatch/plan-dispatch";
 import { runStatus, runDispatch, runDecompose, runPromote, runRedecompose } from "./tools";
 
-// The chunk spec the chief authors per chunk (ADR 0014). featureId is omitted — the handler
-// stamps it from the feature, so the chief doesn't repeat it per chunk.
+// The chunk spec the chief authors per chunk (ADR 0014). The parent sessionId is omitted —
+// the handler stamps it from the session, so the chief doesn't repeat it per chunk.
 const chunkSpec = z.object({
   id: z.string().describe("unique chunk id (becomes the dispatch/branch id)"),
   surface: z.string().describe("the one file this chunk produces"),
@@ -39,10 +39,11 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
     {
       title: "Decompose a feature",
       description:
-        "Write a feature's chunk-DAG to the plan: the feature, its chunks (each a full " +
-        "ADR 0014 spec — one file, contract, acceptance, pre-resolved decisions), and the " +
-        "dependency edges (`to` depends on `from`; precursors built first). Validated for " +
-        "cycles/unknown refs. Plan-only — nothing dispatches until the owner approves.",
+        "Write a feature + a session + that session's chunk-DAG to the plan (ADR 0020): the " +
+        "feature, the session (a ~1k-LOC reviewable unit — it gets one PR later), its chunks " +
+        "(each a full ADR 0014 spec), and the dependency edges (`to` depends on `from`). " +
+        "Validated for cycles/unknown refs. Plan-only — nothing dispatches until the owner " +
+        "approves. (One session per call; a large feature is decomposed session by session.)",
       inputSchema: {
         feature: z
           .object({
@@ -51,7 +52,13 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
             description: z.string().describe("the owner's intent"),
           })
           .describe("the feature being decomposed"),
-        chunks: z.array(chunkSpec).describe("the chunks (one file each)"),
+        session: z
+          .object({
+            id: z.string().describe("unique session id (becomes the session-main branch id)"),
+            locEstimate: z.number().optional().describe("the chief's ~1k-LOC target for this session"),
+          })
+          .describe("the session this chunk-DAG belongs to"),
+        chunks: z.array(chunkSpec).describe("the chunks of this session"),
         edges: z
           .array(z.object({ from: z.string(), to: z.string() }))
           .describe("dependency edges — `to` depends on `from`"),
@@ -75,15 +82,16 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
   server.registerTool(
     "dispatch",
     {
-      title: "Dispatch ready chunks",
+      title: "Dispatch a session's ready chunks",
       description:
-        "Approve a feature and materialise its ready chunks as builds, in one step — " +
-        "calling this IS the act of approval (a still-'planning' feature is moved to " +
-        "ready→building). Call it ONLY on the owner's explicit go, never on a passing " +
-        "'looks good', a guess, or silence. The owner still approves every PR on merge.",
-      inputSchema: { featureId: z.string().describe("the feature id to dispatch ready chunks for") },
+        "Approve the feature and materialise a SESSION's ready chunks as builds, in one step " +
+        "(ADR 0020) — calling this IS the act of approval (the feature moves planning→ready, " +
+        "approving the whole session plan, and the session starts building). Call it ONLY on " +
+        "the owner's explicit go, never on a passing 'looks good', a guess, or silence. The " +
+        "owner still approves the session PR on merge.",
+      inputSchema: { sessionId: z.string().describe("the session id to dispatch ready chunks for") },
     },
-    async ({ featureId }) => runDispatch(service, featureId),
+    async ({ sessionId }) => runDispatch(service, sessionId),
   );
 
   server.registerTool(

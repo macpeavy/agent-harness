@@ -4,17 +4,34 @@
 // The persistence shape lives in ./schema; its row types are re-exported here so the
 // model is one import for "what a feature/chunk/edge is and how its state moves".
 
-export type { Feature, NewFeature, Chunk, NewChunk, Edge, NewEdge } from "./schema";
+export type { Feature, NewFeature, Session, NewSession, Chunk, NewChunk, Edge, NewEdge } from "./schema";
 
-/** A feature's lifecycle: the chief authors the chunk-DAG, then chunks execute. */
+/** A feature's lifecycle (ADR 0020): the chief meta-decomposes it into sessions (planning,
+ *  amendable), the owner approves (ready), sessions dispatch (building), all done (done). */
 export const FEATURE_STATES = ["planning", "ready", "building", "done"] as const;
 export type FeatureState = (typeof FEATURE_STATES)[number];
 
 export const FEATURE_TRANSITIONS: Record<FeatureState, readonly FeatureState[]> = {
-  planning: ["ready"], // the chunk-DAG is authored
-  ready: ["building"], // chunks start dispatching (owner-approved)
-  building: ["done"], // all chunks reached done
+  planning: ["ready"], // the session plan + chunk-DAGs authored/amended; owner approval → ready
+  ready: ["building"], // a session starts dispatching
+  building: ["done"], // every session reached done
   done: [],
+};
+
+/**
+ * A session's lifecycle (ADR 0020) — a ~1k-LOC unit of a feature with its own session-main
+ * branch + one PR. `planning` (its chunk-DAG authored/amended) → `ready` (settled) →
+ * `building` (chunks dispatching) → `done` (chunks done/superseded) / `failed`.
+ */
+export const SESSION_STATES = ["planning", "ready", "building", "done", "failed"] as const;
+export type SessionState = (typeof SESSION_STATES)[number];
+
+export const SESSION_TRANSITIONS: Record<SessionState, readonly SessionState[]> = {
+  planning: ["ready"],
+  ready: ["building"],
+  building: ["done", "failed"],
+  done: [],
+  failed: [],
 };
 
 /**
@@ -47,6 +64,11 @@ export type ChunkOutcome = (typeof CHUNK_OUTCOMES)[number];
 /** A state is terminal when it has no outgoing transitions. */
 export function isChunkTerminal(state: ChunkState): boolean {
   return CHUNK_TRANSITIONS[state].length === 0;
+}
+
+/** A session state is terminal when it has no outgoing transitions. */
+export function isSessionTerminal(state: SessionState): boolean {
+  return SESSION_TRANSITIONS[state].length === 0;
 }
 
 /** A dependency edge in a proposed chunk-DAG (`to` depends on `from`). */
