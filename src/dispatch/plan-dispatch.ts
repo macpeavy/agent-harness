@@ -169,8 +169,33 @@ export class PlanDispatchService {
   }
 
   /**
+   * Add one chunk to an existing session before approval (ADR 0020 §5b) — the chief grows a
+   * session's DAG on owner feedback. Optional edges wire the new chunk to the session's
+   * existing chunks. Validated as a DAG over the session's resulting graph (acyclic, known
+   * refs, no dup id) before the write. Planning-amendable (the repo gates on `planning`).
+   * `decompose` is the initial pass-2 fill of an empty session; this is the incremental add.
+   */
+  addChunk(input: { sessionId: string; chunk: Omit<CreateChunk, "sessionId">; edges?: DagEdge[] }): {
+    featureId: string;
+    sessionId: string;
+    chunkId: string;
+  } {
+    const session = this.plan.getSession(input.sessionId);
+    if (!session) throw new Error(`no session ${input.sessionId}`);
+    const edges = input.edges ?? [];
+
+    const projectedIds = [...this.plan.listChunks(input.sessionId).map((c) => c.id), input.chunk.id];
+    const projectedEdges = [...this.plan.listEdges(input.sessionId), ...edges];
+    const violation = validateDag(projectedIds, projectedEdges);
+    if (violation) throw new Error(`invalid chunk addition: ${violation}`);
+
+    this.plan.addChunkDag(input.sessionId, [{ ...input.chunk, sessionId: input.sessionId }], edges);
+    return { featureId: session.featureId, sessionId: input.sessionId, chunkId: input.chunk.id };
+  }
+
+  /**
    * Revise + prune the plan before approval (ADR 0020 §5b) — the chief iterates with the
-   * owner while the feature is in `planning`. All four delegate to the plan repo, which gates
+   * owner while the feature is in `planning`. All delegate to the plan repo, which gates
    * each on the parent feature being `planning` (a built/approved plan can't be edited).
    */
   reviseChunk(chunkId: string, spec: ReviseChunk): void {

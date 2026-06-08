@@ -115,6 +115,22 @@ export function runDecompose(service: PlanDispatchService, input: DecomposeInput
   return guard(() => text(renderDecomposed(service.decompose(input))));
 }
 
+/** The `add_chunk` tool's input — one chunk to add to an existing session, plus optional
+ *  edges wiring it to that session's chunks. */
+export interface AddChunkInput {
+  sessionId: string;
+  chunk: Omit<CreateChunk, "sessionId">;
+  edges?: { from: string; to: string }[];
+}
+
+/** `add_chunk` — add one chunk to an existing session before approval (ADR 0020 §5b). */
+export function runAddChunk(service: PlanDispatchService, input: AddChunkInput): CallToolResult {
+  return guard(() => {
+    const { chunkId, sessionId } = service.addChunk(input);
+    return text(`Added chunk ${chunkId} to session ${sessionId} (${input.edges?.length ?? 0} edge(s)).`);
+  });
+}
+
 /** `revise_chunk` — re-spec a planned chunk before approval (ADR 0020 §5b). */
 export function runReviseChunk(service: PlanDispatchService, input: { chunkId: string } & ReviseChunk): CallToolResult {
   return guard(() => {

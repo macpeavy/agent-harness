@@ -86,6 +86,7 @@ describe("tool discovery", () => {
   it("exposes the full chief toolset", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
+      "add_chunk",
       "decompose",
       "dispatch",
       "meta_decompose",
@@ -216,7 +217,20 @@ describe("redecompose", () => {
   });
 });
 
-describe("revise + prune before approval (ADR 0020 §5b)", () => {
+describe("add + revise + prune before approval (ADR 0020 §5b)", () => {
+  it("adds a chunk to an existing session, wired with an edge", async () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+
+    const body = await callText("add_chunk", {
+      sessionId: "S1",
+      chunk: { id: "b", surface: "src/b.ts", intent: "do b", contract: "c", acceptance: "t" },
+      edges: [{ from: "a", to: "b" }],
+    });
+    expect(body).toContain("Added chunk b to session S1");
+    expect(plan.listChunks("S1").map((c) => c.id)).toEqual(["a", "b"]);
+  });
+
   it("revises a chunk and prunes a session while the feature is planning", async () => {
     seedFeatureSession();
     plan.createSession({ id: "S2", featureId: "F1" });
@@ -256,6 +270,7 @@ describe("stdio smoke-boot", () => {
       await smokeClient.connect(transport);
       const { tools } = await smokeClient.listTools();
       expect(tools.map((t) => t.name).sort()).toEqual([
+        "add_chunk",
         "decompose",
         "dispatch",
         "meta_decompose",

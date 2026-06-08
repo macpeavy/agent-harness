@@ -18,6 +18,7 @@ import {
   runMetaDecompose,
   runPromote,
   runRedecompose,
+  runAddChunk,
   runReviseChunk,
   runRemoveChunk,
   runRemoveSession,
@@ -80,9 +81,10 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
     {
       title: "Decompose a session into its chunk-DAG",
       description:
-        "Pass 2 of two-level decomposition (ADR 0020): write a session's chunks (each a full " +
-        "ADR 0014 spec) + dependency edges (`to` depends on `from`) to the plan. The session " +
-        "must already exist (from meta_decompose). Validated for cycles/unknown refs. " +
+        "Pass 2 of two-level decomposition (ADR 0020): the INITIAL fill of a session — write its " +
+        "chunks (each a full ADR 0014 spec) + dependency edges (`to` depends on `from`). The " +
+        "session must already exist (from meta_decompose). To add ONE chunk to a session later " +
+        "(during revision), use `add_chunk`, not this. Validated for cycles/unknown refs. " +
         "Plan-only — nothing dispatches until the owner approves.",
       inputSchema: {
         sessionId: z.string().describe("the session to decompose (from meta_decompose)"),
@@ -95,7 +97,28 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
     async (input) => runDecompose(service, input),
   );
 
-  // --- planning-amendable: revise + prune (ADR 0020 §5b) — edit the plan before approval ---
+  // --- planning-amendable: add + revise + prune (ADR 0020 §5b) — edit the plan before approval ---
+
+  server.registerTool(
+    "add_chunk",
+    {
+      title: "Add a chunk to a session",
+      description:
+        "Add ONE chunk to an existing session before approval (ADR 0020) — the incremental add " +
+        "during revision (use `decompose` for the initial fill of an empty session). Optional " +
+        "edges wire it to the session's existing chunks. Validated for cycles/unknown refs. " +
+        "Allowed while the feature is in planning; frozen once approved.",
+      inputSchema: {
+        sessionId: z.string().describe("the session to add the chunk to"),
+        chunk: chunkSpec.describe("the chunk to add (a full ADR 0014 spec)"),
+        edges: z
+          .array(z.object({ from: z.string(), to: z.string() }))
+          .optional()
+          .describe("optional edges wiring the new chunk to the session's chunks (`to` depends on `from`)"),
+      },
+    },
+    async (input) => runAddChunk(service, input),
+  );
 
   server.registerTool(
     "revise_chunk",
