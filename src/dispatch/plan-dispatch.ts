@@ -155,6 +155,23 @@ export class PlanDispatchService {
   }
 
   /**
+   * Approve a feature for build (ADR 0020 slice 2b) — the owner's gate, the chief's `dispatch`
+   * call. Moves the feature `planning → ready`, which is what tells the deterministic session
+   * loop it may open + launch the feature's sessions. Plan-only and fast: the chief hands off
+   * and steps back; the loop does the git (session-open) and the materialisation. Idempotent —
+   * approving an already-approved feature is a no-op. Takes a session id (the chief dispatches
+   * a session); the whole feature's session plan is approved (ADR 0020 §6).
+   */
+  approve(sessionId: string): { featureId: string } {
+    const session = this.plan.getSession(sessionId);
+    if (!session) throw new Error(`no session ${sessionId}`);
+    const feature = this.plan.getFeature(session.featureId);
+    if (!feature) throw new Error(`no feature ${session.featureId}`);
+    if (feature.state === "planning") this.plan.transitionFeature(feature.id, "ready");
+    return { featureId: feature.id };
+  }
+
+  /**
    * Approve the feature (if needed) and materialise a SESSION's ready chunks as dispatches:
    * create the registry row (spec assembled from the chunk, curation carried on its own
    * columns), then link it back onto the chunk. The running daemon picks the queued rows up.

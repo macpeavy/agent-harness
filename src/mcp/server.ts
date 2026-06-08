@@ -82,14 +82,15 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
   server.registerTool(
     "dispatch",
     {
-      title: "Dispatch a session's ready chunks",
+      title: "Dispatch (approve) a session for build",
       description:
-        "Approve the feature and materialise a SESSION's ready chunks as builds, in one step " +
-        "(ADR 0020) — calling this IS the act of approval (the feature moves planning→ready, " +
-        "approving the whole session plan, and the session starts building). Call it ONLY on " +
-        "the owner's explicit go, never on a passing 'looks good', a guess, or silence. The " +
-        "owner still approves the session PR on merge.",
-      inputSchema: { sessionId: z.string().describe("the session id to dispatch ready chunks for") },
+        "Approve the feature for build (ADR 0020) — calling this IS the act of approval (the " +
+        "feature moves planning→ready, approving the whole session plan). The session loop then " +
+        "opens session-main, launches the ready chunks, and builds them into the one session " +
+        "PR; you hand off and step back (use status to watch). Call it ONLY on the owner's " +
+        "explicit go, never on a passing 'looks good', a guess, or silence. The owner approves " +
+        "the session PR on merge.",
+      inputSchema: { sessionId: z.string().describe("a session of the feature to approve for build") },
     },
     async ({ sessionId }) => runDispatch(service, sessionId),
   );
