@@ -200,6 +200,16 @@ export class PlanRepository {
     return this.db.select().from(features).where(eq(features.id, id)).get() ?? null;
   }
 
+  /**
+   * List every registered feature, ordered from oldest to newest by their creation timestamp.
+   * Used by the fleet status CLI to render the full fleet view in chronological order.
+   * 
+   * @returns An array of Feature objects, oldest first.
+   */
+  listAllFeatures(): Feature[] {
+    return this.db.select().from(features).orderBy(asc(features.createdAt)).all();
+  }
+
   /** Move a feature to a new state, validated against the feature graph. */
   transitionFeature(id: string, to: FeatureState): void {
     this.db.transaction((tx) => {
