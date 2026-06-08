@@ -391,17 +391,36 @@ export class PlanDispatchService {
       flowed.push({ chunkId: chunk.id, outcome });
     }
 
-    // A session completes when every chunk reached a terminal-success state — `done`, or
-    // `superseded` (re-decomposed: retired, its work carried by replacements that are done).
-    // A `failed` or in-flight chunk holds it open.
+    // A session's build is complete when every chunk reached a terminal-success state — `done`,
+    // or `superseded` (re-decomposed: retired, its work carried by replacements that are done).
+    // A `failed` or in-flight chunk holds it open. Build-complete moves the session to `review`,
+    // NOT `done` (ADR 0020 §6): its chunks are in session-main and the PR awaits the owner. The
+    // owner's merge (closeSession) is the only thing that reaches `done` — the merge gate.
     const chunks = this.plan.listChunks(sessionId);
-    const sessionComplete = chunks.length > 0 && chunks.every((c) => c.state === "done" || c.state === "superseded");
-    if (session.state === "building" && sessionComplete) {
-      this.plan.transitionSession(sessionId, "done");
-      this.completeFeatureIfDone(session.featureId);
+    const buildComplete = chunks.length > 0 && chunks.every((c) => c.state === "done" || c.state === "superseded");
+    if (session.state === "building" && buildComplete) {
+      this.plan.transitionSession(sessionId, "review");
     }
 
     return flowed;
+  }
+
+  /**
+   * Close a session on the owner's merge (ADR 0020 §6) — the second owner gate. Moves the
+   * session `review → done`; when every session of the feature is done, the feature follows.
+   * This is the substrate's record of "the owner merged the session PR" — the merge itself
+   * happens on GitHub, the load-bearing safety boundary. Idempotent: closing an already-done
+   * session is a no-op. Throws if the session isn't in `review` (nothing built to merge yet).
+   */
+  closeSession(sessionId: string): { featureId: string } {
+    const session = this.plan.getSession(sessionId);
+    if (!session) throw new Error(`no session ${sessionId}`);
+    if (session.state === "done") return { featureId: session.featureId }; // idempotent
+    if (session.state !== "review")
+      throw new Error(`session ${sessionId} is ${session.state}, not review — nothing to close`);
+    this.plan.transitionSession(sessionId, "done");
+    this.completeFeatureIfDone(session.featureId);
+    return { featureId: session.featureId };
   }
 
   /**

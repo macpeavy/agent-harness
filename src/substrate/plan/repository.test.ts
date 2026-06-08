@@ -113,8 +113,16 @@ describe("session transitions", () => {
     seedFeatureSession();
     plan.transitionSession("S1", "ready");
     plan.transitionSession("S1", "building");
-    plan.transitionSession("S1", "done");
+    plan.transitionSession("S1", "review"); // build complete → PR awaits the owner (ADR 0020 §6)
+    plan.transitionSession("S1", "done"); // the owner merges the PR
     expect(plan.getSession("S1")?.state).toBe("done");
+  });
+
+  it("rejects building → done (the owner's merge gate sits between)", () => {
+    seedFeatureSession();
+    plan.transitionSession("S1", "ready");
+    plan.transitionSession("S1", "building");
+    expect(() => plan.transitionSession("S1", "done")).toThrow("illegal session transition building → done");
   });
 
   it("rejects an illegal session transition", () => {

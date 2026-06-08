@@ -148,6 +148,22 @@ describe("status", () => {
     expect(body).toContain("a  src/a.ts");
   });
 
+  it("surfaces a build-complete session as awaiting the owner's review (the completion signal)", async () => {
+    seedFeatureSession();
+    plan.linkSessionPr("S1", { branch: "session-main-S1", prNumber: 7, prUrl: "http://pr/7" });
+    plan.addChunk(chunk("a"));
+    service.dispatchReady("S1");
+    // Drive the chunk's dispatch to done the way the daemon would, then reap it.
+    dispatch.transition("a", "building");
+    dispatch.transition("a", "review");
+    dispatch.transition("a", "done");
+    service.recordOutcomes("S1");
+
+    const body = await callText("status", { featureId: "F1" });
+    expect(body).toContain("NEEDS ATTENTION: S1 awaiting your review (PR #7) — review/merge its PR");
+    expect(body).toContain("Session S1 [review]");
+  });
+
   it("returns a tool error for an unknown feature", async () => {
     expect(await isError("status", { featureId: "ghost" })).toBe(true);
   });

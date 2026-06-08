@@ -144,7 +144,7 @@ describe("dispatchReady (session-scoped, feature-level approval)", () => {
 });
 
 describe("recordOutcomes (session-scoped) + completion", () => {
-  it("flows outcomes back and completes the session then the feature when all chunks done", () => {
+  it("flows outcomes back and moves the session to review (build complete, awaiting the owner)", () => {
     decompose([chunk("a"), chunk("b")]);
     service.dispatchReady("S1");
     driveTo("a", "done");
@@ -152,11 +152,34 @@ describe("recordOutcomes (session-scoped) + completion", () => {
 
     const flowed = service.recordOutcomes("S1");
     expect(flowed).toContainEqual({ chunkId: "a", outcome: "done" });
-    expect(plan.getSession("S1")?.state).toBe("done");
-    expect(plan.getFeature("F1")?.state).toBe("done"); // the feature's only session is done
+    expect(plan.getSession("S1")?.state).toBe("review"); // NOT done — the PR awaits the owner
+    expect(plan.getFeature("F1")?.state).toBe("building"); // the feature holds until the merge
   });
 
-  it("leaves the feature building while another session is unfinished", () => {
+  it("closes the session on the owner's merge, completing the feature", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1");
+    driveTo("a", "done");
+    service.recordOutcomes("S1");
+    expect(plan.getSession("S1")?.state).toBe("review");
+
+    const { featureId } = service.closeSession("S1"); // the owner merged the PR
+    expect(featureId).toBe("F1");
+    expect(plan.getSession("S1")?.state).toBe("done");
+    expect(plan.getFeature("F1")?.state).toBe("done"); // the feature's only session is merged
+  });
+
+  it("closeSession is idempotent and rejects a session that isn't in review", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1");
+    expect(() => service.closeSession("S1")).toThrow("not review"); // still building
+    driveTo("a", "done");
+    service.recordOutcomes("S1");
+    service.closeSession("S1");
+    expect(() => service.closeSession("S1")).not.toThrow(); // idempotent once done
+  });
+
+  it("leaves the feature building while another session is unmerged", () => {
     plan.createFeature(FEATURE);
     plan.createSession({ id: "S1", featureId: "F1" });
     plan.createSession({ id: "S2", featureId: "F1" });
@@ -166,6 +189,7 @@ describe("recordOutcomes (session-scoped) + completion", () => {
     service.dispatchReady("S1");
     driveTo("a", "done");
     service.recordOutcomes("S1");
+    service.closeSession("S1"); // S1 merged
 
     expect(plan.getSession("S1")?.state).toBe("done");
     expect(plan.getFeature("F1")?.state).toBe("building"); // S2 still open

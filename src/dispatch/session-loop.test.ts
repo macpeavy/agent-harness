@@ -105,7 +105,7 @@ describe("SessionLoop.runOnce", () => {
     expect(opened).toEqual(["S1"]); // still just once
   });
 
-  it("advances the DAG as chunks land, then completes the session + feature", async () => {
+  it("advances the DAG as chunks land, then moves the session to review (awaiting the owner)", async () => {
     plan.createFeature(FEATURE);
     plan.createSession({ id: "S1", featureId: "F1" });
     plan.addChunk(chunk("a"));
@@ -123,9 +123,14 @@ describe("SessionLoop.runOnce", () => {
     expect(plan.getChunk("b")?.state).toBe("dispatched");
 
     landChunk("b");
-    await loop().runOnce(); // reaps b → session + feature done
-    expect(plan.getSession("S1")?.state).toBe("done");
-    expect(plan.getFeature("F1")?.state).toBe("done");
+    await loop().runOnce(); // reaps b → session reaches review (build complete, PR awaits owner)
+    expect(plan.getSession("S1")?.state).toBe("review");
+    expect(plan.getFeature("F1")?.state).toBe("building"); // the feature holds until the merge
+
+    // A later tick leaves the review session untouched — nothing ready, no re-open, no re-transition.
+    await loop().runOnce();
+    expect(plan.getSession("S1")?.state).toBe("review");
+    expect(opened).toEqual(["S1"]); // not re-opened
   });
 
   it("ignores terminal sessions", async () => {
@@ -134,6 +139,7 @@ describe("SessionLoop.runOnce", () => {
     plan.transitionFeature("F1", "ready");
     plan.transitionSession("S1", "ready");
     plan.transitionSession("S1", "building");
+    plan.transitionSession("S1", "review");
     plan.transitionSession("S1", "done");
 
     const advanced = await loop().runOnce();
