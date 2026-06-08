@@ -140,6 +140,30 @@ export function runReviseChunk(service: PlanDispatchService, input: { chunkId: s
   });
 }
 
+/** The `add_session` tool's input — a new session to add to an existing feature. */
+export interface AddSessionInput {
+  featureId: string;
+  sessionId: string;
+  locEstimate?: number;
+}
+
+/** `add_session` — add a session to an existing feature before approval (ADR 0020 §5b). */
+export function runAddSession(service: PlanDispatchService, input: AddSessionInput): CallToolResult {
+  return guard(() => {
+    service.addSession(input.featureId, input.sessionId, input.locEstimate);
+    const loc = input.locEstimate ? ` (~${input.locEstimate} LOC)` : "";
+    return text(`Added session ${input.sessionId} to feature ${input.featureId}${loc}. Decompose it into its chunk-DAG.`);
+  });
+}
+
+/** `add_edge` — add one dependency edge between two chunks of a session before approval. */
+export function runAddEdge(service: PlanDispatchService, fromChunkId: string, toChunkId: string): CallToolResult {
+  return guard(() => {
+    service.addEdge(fromChunkId, toChunkId);
+    return text(`Added edge ${fromChunkId} → ${toChunkId}.`);
+  });
+}
+
 /** `remove_chunk` — drop a planned chunk (and its edges) before approval. */
 export function runRemoveChunk(service: PlanDispatchService, chunkId: string): CallToolResult {
   return guard(() => {

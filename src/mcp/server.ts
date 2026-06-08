@@ -19,6 +19,8 @@ import {
   runPromote,
   runRedecompose,
   runAddChunk,
+  runAddSession,
+  runAddEdge,
   runReviseChunk,
   runRemoveChunk,
   runRemoveSession,
@@ -118,6 +120,41 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
       },
     },
     async (input) => runAddChunk(service, input),
+  );
+
+  server.registerTool(
+    "add_session",
+    {
+      title: "Add a session to a feature",
+      description:
+        "Add ONE session to an existing feature before approval (ADR 0020 §5b) — the symmetric " +
+        "counterpart to `remove_session`, for when the plan needs another ~1k-LOC reviewable unit " +
+        "(use `meta_decompose` for the initial set). Decompose it afterward into its chunk-DAG. " +
+        "Allowed while the feature is in planning; frozen once approved.",
+      inputSchema: {
+        featureId: z.string().describe("the feature to add the session to"),
+        sessionId: z.string().describe("unique session id (becomes the session-main branch id)"),
+        locEstimate: z.number().optional().describe("the chief's ~1k-LOC target for this session"),
+      },
+    },
+    async (input) => runAddSession(service, input),
+  );
+
+  server.registerTool(
+    "add_edge",
+    {
+      title: "Add a dependency edge",
+      description:
+        "Add ONE dependency edge (`from`→`to`, `to` depends on `from`) between two chunks of the " +
+        "same session before approval (ADR 0020 §5b) — the symmetric counterpart to `remove_edge`. " +
+        "Rejects a self-edge, a cross-session edge, or one that would form a cycle. Allowed while " +
+        "the feature is in planning.",
+      inputSchema: {
+        from: z.string().describe("the precursor chunk id"),
+        to: z.string().describe("the dependent chunk id"),
+      },
+    },
+    async ({ from, to }) => runAddEdge(service, from, to),
   );
 
   server.registerTool(

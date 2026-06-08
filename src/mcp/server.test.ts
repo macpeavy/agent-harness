@@ -87,6 +87,8 @@ describe("tool discovery", () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "add_chunk",
+      "add_edge",
+      "add_session",
       "decompose",
       "dispatch",
       "meta_decompose",
@@ -231,6 +233,29 @@ describe("add + revise + prune before approval (ADR 0020 §5b)", () => {
     expect(plan.listChunks("S1").map((c) => c.id)).toEqual(["a", "b"]);
   });
 
+  it("adds a session to a feature and an edge between two chunks (full symmetry)", async () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    plan.addChunk(chunk("b"));
+
+    const addedSession = await callText("add_session", { featureId: "F1", sessionId: "S2", locEstimate: 600 });
+    expect(addedSession).toContain("Added session S2 to feature F1");
+    expect(plan.listSessions("F1").map((s) => s.id)).toEqual(["S1", "S2"]);
+
+    const addedEdge = await callText("add_edge", { from: "a", to: "b" });
+    expect(addedEdge).toContain("Added edge a → b");
+    expect(plan.listEdges("S1")).toEqual([{ from: "a", to: "b" }]);
+  });
+
+  it("returns a tool error adding a cross-session edge", async () => {
+    seedFeatureSession();
+    plan.createSession({ id: "S2", featureId: "F1" });
+    plan.addChunk(chunk("a"));
+    plan.addChunk(chunk("b", { sessionId: "S2" }));
+
+    expect(await isError("add_edge", { from: "a", to: "b" })).toBe(true);
+  });
+
   it("revises a chunk and prunes a session while the feature is planning", async () => {
     seedFeatureSession();
     plan.createSession({ id: "S2", featureId: "F1" });
@@ -271,6 +296,8 @@ describe("stdio smoke-boot", () => {
       const { tools } = await smokeClient.listTools();
       expect(tools.map((t) => t.name).sort()).toEqual([
         "add_chunk",
+        "add_edge",
+        "add_session",
         "decompose",
         "dispatch",
         "meta_decompose",

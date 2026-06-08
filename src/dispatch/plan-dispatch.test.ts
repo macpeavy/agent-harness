@@ -289,3 +289,32 @@ describe("addChunk (incremental add before approval, ADR 0020 §5b)", () => {
     expect(() => service.addChunk({ sessionId: "ghost", chunk: chunk("b") })).toThrow("no session");
   });
 });
+
+describe("addSession + addEdge (full edit symmetry, ADR 0020 §5b)", () => {
+  it("adds a session to an existing feature while planning", () => {
+    decompose([chunk("a")]); // F1 / S1
+    service.addSession("F1", "S2", 600);
+    expect(plan.listSessions("F1").map((s) => s.id)).toEqual(["S1", "S2"]);
+    expect(plan.getSession("S2")?.locEstimate).toBe(600);
+  });
+
+  it("adds a dependency edge between two chunks of the same session", () => {
+    decompose([chunk("a"), chunk("b")]); // S1 has a, b — no edges
+    service.addEdge("a", "b");
+    expect(plan.listEdges("S1")).toEqual([{ from: "a", to: "b" }]);
+    expect(plan.readyChunks("S1").map((c) => c.id)).toEqual(["a"]); // b now gated on a→b
+  });
+
+  it("rejects an edge that spans sessions", () => {
+    decompose([chunk("a")]); // S1 has a
+    service.addSession("F1", "S2");
+    service.addChunk({ sessionId: "S2", chunk: chunk("b", { sessionId: "S2" }) });
+    expect(() => service.addEdge("a", "b")).toThrow("spans sessions");
+    expect(plan.listEdges("S1")).toEqual([]);
+  });
+
+  it("throws adding an edge from an unknown chunk", () => {
+    decompose([chunk("a")]);
+    expect(() => service.addEdge("ghost", "a")).toThrow("no chunk ghost");
+  });
+});

@@ -44,7 +44,7 @@ You reach the substrate through MCP tools, never by building yourself:
 - **`status`** — read plan + build progress per session, the sessions that **finished or escalated** (needs-attention), and the parked escalations to route.
 - **`promote`** — re-dispatch a parked escalated chunk on the strong build tier. Use when the chunk is sound but too hard for the cheap tier.
 - **`redecompose`** — retire a parked escalated chunk and replace it with smaller chunks. Use when it was too big; supply the replacements and the edges that reconnect its former dependents.
-- **Edit before approval** — while the feature is in `planning`, edit the plan on the owner's feedback: `add_chunk` (add a chunk to a session), `revise_chunk` (re-spec), `remove_chunk` / `remove_session` / `remove_edge` (prune). Iterate until they're satisfied, then `dispatch` (approve). Frozen once approved.
+- **Edit before approval** — while the feature is in `planning`, edit the plan on the owner's feedback with the full symmetric vocabulary: add (`add_session`, `add_chunk`, `add_edge`), revise (`revise_chunk`), prune (`remove_session`, `remove_chunk`, `remove_edge`). Iterate until they're satisfied, then `dispatch` (approve). Frozen once approved.
 
 - **Two-level decomposition.** `meta_decompose` the feature into sessions, then `decompose` each session into its chunk-DAG (ADR 0020). The session is the reviewable unit — one PR per session, not per chunk.
 - **Two owner gates.** First: the plan — you propose the sessions + their chunk-DAGs, *ask to proceed*, and dispatch only on their explicit go (dispatching is approving). Second: the merges on GitHub — they approve each session PR. You autopilot between.
