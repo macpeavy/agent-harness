@@ -29,6 +29,8 @@ set -a; source .env; set +a          # exports OPENROUTER_API_KEY, LITELLM_MASTE
 litellm --config config/litellm.yaml # → http://localhost:4000
 ```
 
+Or just `make gateway` (and `make up` for the whole session — gateway + daemon + chief in one tmux). See the root `Makefile`.
+
 ### Verify
 
 ```bash
