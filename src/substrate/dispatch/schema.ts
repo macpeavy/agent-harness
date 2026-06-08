@@ -33,6 +33,10 @@ export const dispatches = sqliteTable("dispatches", {
   // builds on the cheap or strong builder agent — and survives a resumed build. Null is
   // treated as cheap (the default route); a tier-promoted re-dispatch carries 'strong'.
   tier: text("tier", { enum: BUILD_TIERS }),
+  // The session-main branch this chunk builds off and squash-merges into on a clean review
+  // (ADR 0020). Carried so the daemon stays plan-agnostic — it merges chunk → this branch
+  // without importing the plan. Null = legacy build-off-main (pre-session-main).
+  sessionBranch: text("session_branch"),
   state: text("state", { enum: DISPATCH_STATES }).notNull().default("queued"),
   // Linked OpenCode session ids — the registry links them, it does not own the
   // sessions or duplicate their data (ADR 0009, above-OpenCode layering).

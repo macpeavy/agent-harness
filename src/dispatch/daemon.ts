@@ -13,6 +13,7 @@ import { estimateCost } from "./cost";
 import { dispatchBranch, runBuildLeg, type BuildResult, type Issue } from "./legs/build";
 import { runReviewLeg, type ReviewResult, type ReviewTarget } from "./legs/review";
 import { runAmendLeg, type AmendResult } from "./legs/amend";
+import { runMergeLeg, type MergeResult, type MergeTarget } from "./legs/merge";
 import { loadConfig, type SubstrateConfig } from "../config";
 import { DispatchRepository, TRANSITIONS, type Dispatch } from "../substrate/dispatch";
 
@@ -21,20 +22,15 @@ export interface DispatchLegs {
   build(issue: Issue, config: SubstrateConfig): Promise<BuildResult>;
   review(target: ReviewTarget, config: SubstrateConfig): Promise<ReviewResult>;
   amend(target: ReviewTarget, findings: string, config: SubstrateConfig): Promise<AmendResult>;
+  merge(target: MergeTarget, config: SubstrateConfig): Promise<MergeResult>;
 }
 
 const defaultLegs: DispatchLegs = {
   build: runBuildLeg,
   review: runReviewLeg,
   amend: runAmendLeg,
+  merge: runMergeLeg,
 };
-
-// Extract the PR number from a PR url (…/pull/41 → 41), or null if absent/unparseable.
-function prNumber(prUrl: string | null): number | null {
-  if (!prUrl) return null;
-  const n = Number(prUrl.split("/").pop());
-  return Number.isInteger(n) ? n : null;
-}
 
 export class DispatchDaemon {
   private running = false;
@@ -119,6 +115,7 @@ export class DispatchDaemon {
       surface: dispatch.surface ?? undefined,
       skills: dispatch.skills ?? undefined,
       tier: dispatch.tier ?? undefined,
+      sessionBranch: dispatch.sessionBranch ?? undefined,
     };
 
     const result = await this.legs.build(issue, this.config);
@@ -126,11 +123,12 @@ export class DispatchDaemon {
     this.repo.setRoute(id, result.route);
     this.repo.setCost(id, "build", estimateCost(result.route, result.tokens.input, result.tokens.output));
 
-    if (!result.changed || !result.prUrl) {
+    // The builder changed nothing → nothing to review or merge (ADR 0020: no per-chunk PR,
+    // so a built chunk advances to review on `changed` alone).
+    if (!result.changed) {
       this.repo.transition(id, "failed");
       return;
     }
-    this.repo.setPr(id, result.prUrl);
     this.repo.transition(id, "review");
     await this.review(id, result.branch);
   }
@@ -141,15 +139,18 @@ export class DispatchDaemon {
   private async review(id: string, branch?: string): Promise<void> {
     while (true) {
       const dispatch = this.require(id);
-      const pr = prNumber(dispatch.prUrl);
-      if (pr === null) throw new Error(`dispatch ${id} is in review with no PR url`);
-      const target: ReviewTarget = { pr, branch: branch ?? dispatch.branch };
+      const target: ReviewTarget = {
+        branch: branch ?? dispatch.branch,
+        sessionBranch: dispatch.sessionBranch ?? undefined,
+      };
 
       const result = await this.legs.review(target, this.config);
       this.repo.setSessions(id, { reviewSessionId: result.reviewSessionId });
       this.repo.setCost(id, "review", estimateCost(result.route, result.tokens.input, result.tokens.output));
 
       if (result.verdict === "clean") {
+        // Clean review → squash-merge the chunk into session-main (ADR 0020), then done.
+        await this.merge(id, target.branch);
         this.repo.transition(id, "done");
         return;
       }
@@ -179,6 +180,15 @@ export class DispatchDaemon {
     this.repo.setCost(id, "amend", estimateCost(result.route, result.tokens.input, result.tokens.output));
     this.repo.incrementAmendRound(id);
     return result.changed;
+  }
+
+  // Squash-merge a cleanly-reviewed chunk into its session-main branch (ADR 0020). The
+  // session-main branch rides the dispatch row, so the daemon stays plan-agnostic. A
+  // dispatch with no sessionBranch (legacy build-off-main) has nothing to merge into.
+  private async merge(id: string, branch: string): Promise<void> {
+    const dispatch = this.require(id);
+    if (!dispatch.sessionBranch) return;
+    await this.legs.merge({ branch, sessionBranch: dispatch.sessionBranch, title: dispatch.title }, this.config);
   }
 
   // Mark a dispatch failed (if the graph allows it from its current state) and log the

@@ -190,7 +190,7 @@ export class PlanDispatchService {
     }
 
     const ready = this.plan.readyChunks(sessionId);
-    const materialised = ready.map((chunk) => this.materialise(chunk));
+    const materialised = ready.map((chunk) => this.materialise(chunk, session.branch));
 
     if (materialised.length > 0) {
       if (sessionStateNow === "ready") this.plan.transitionSession(sessionId, "building");
@@ -215,7 +215,8 @@ export class PlanDispatchService {
     this.plan.setTierHint(escalatedChunkId, "strong");
     const promoted = this.plan.getChunk(escalatedChunkId);
     if (!promoted) throw new Error(`no chunk ${escalatedChunkId}`);
-    return this.materialise(promoted);
+    const session = this.plan.getSession(promoted.sessionId);
+    return this.materialise(promoted, session?.branch ?? null);
   }
 
   /**
@@ -382,7 +383,7 @@ export class PlanDispatchService {
    * one id. A re-dispatch gets a fresh id (chunkId-r2, …) so it doesn't collide with the prior
    * attempt's branch; first dispatch is just the chunk id.
    */
-  private materialise(chunk: Chunk): MaterialisedDispatch {
+  private materialise(chunk: Chunk, sessionBranch: string | null): MaterialisedDispatch {
     const dispatchId = this.nextDispatchId(chunk.id);
     const branch = dispatchBranch({ id: dispatchId, title: chunk.intent, body: "" });
     this.dispatch.create({
@@ -393,6 +394,10 @@ export class PlanDispatchService {
       spec: specFromChunk(chunk),
       surface: chunk.surface,
       tier: chunk.tierHint,
+      // The session-main branch the chunk builds off + merges into on clean (ADR 0020),
+      // carried so the daemon merges without importing the plan. Null until slice 2's
+      // session-open populates the session's branch.
+      sessionBranch: sessionBranch ?? undefined,
       // No chunk.skills field yet (ADR 0019 open question) — the build leg infers skills
       // from `surface` until the chief curates them per chunk.
     });

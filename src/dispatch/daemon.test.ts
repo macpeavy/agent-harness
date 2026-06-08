@@ -6,6 +6,7 @@ import { DispatchDaemon, type DispatchLegs } from "./daemon";
 import { dispatchBranch, type BuildResult, type Issue } from "./legs/build";
 import type { ReviewResult, ReviewTarget, ReviewVerdict } from "./legs/review";
 import type { AmendResult } from "./legs/amend";
+import type { MergeResult, MergeTarget } from "./legs/merge";
 import type { SubstrateConfig } from "../config";
 import { DispatchRepository } from "../substrate/dispatch";
 
@@ -50,6 +51,7 @@ interface Recorder {
   build: Issue[];
   review: ReviewTarget[];
   amend: { target: ReviewTarget; findings: string }[];
+  merge: MergeTarget[];
 }
 
 // Fake legs that record their calls and return canned results. `reviewVerdicts` is
@@ -62,7 +64,7 @@ function fakeLegs(
     amendChanges?: boolean;
   } = {},
 ): { legs: DispatchLegs; rec: Recorder } {
-  const rec: Recorder = { build: [], review: [], amend: [] };
+  const rec: Recorder = { build: [], review: [], amend: [], merge: [] };
   const verdicts = [...(opts.reviewVerdicts ?? [])];
   const changed = opts.changed ?? true;
   const legs: DispatchLegs = {
@@ -76,7 +78,6 @@ function fakeLegs(
         worktree: "/tmp/wt",
         changed,
         reply: "built",
-        prUrl: changed ? "https://github.com/acme/widgets/pull/7" : undefined,
         route: "builder",
         buildSessionId: "ses_build",
         tokens: { input: 1000, output: 500 },
@@ -86,7 +87,6 @@ function fakeLegs(
     async review(target) {
       rec.review.push(target);
       const result: ReviewResult = {
-        pr: target.pr,
         branch: target.branch,
         review: "the findings",
         verdict: verdicts.shift() ?? "clean",
@@ -107,6 +107,11 @@ function fakeLegs(
       };
       return result;
     },
+    async merge(target) {
+      rec.merge.push(target);
+      const result: MergeResult = { merged: true };
+      return result;
+    },
   };
   return { legs, rec };
 }
@@ -122,7 +127,6 @@ describe("the happy path", () => {
     expect(driven).toBe(1);
     const d = repo.get("d1");
     expect(d?.state).toBe("done");
-    expect(d?.prUrl).toContain("/pull/7");
     expect(d?.buildSessionId).toBe("ses_build");
     expect(d?.reviewSessionId).toBe("ses_review");
     expect(d?.route).toBe("builder");
@@ -131,7 +135,7 @@ describe("the happy path", () => {
 
     expect(rec.build).toHaveLength(1);
     expect(rec.review).toHaveLength(1);
-    expect(rec.review[0]?.pr).toBe(7);
+    expect(rec.review[0]?.branch).toBe(dispatchBranch(ISSUE));
   });
 
   it("builds from the dispatch's stored spec", async () => {
@@ -213,10 +217,9 @@ describe("crash recovery", () => {
     expect(rec.build).toHaveLength(1);
   });
 
-  it("resumes a review dispatch by re-running only the review, on the stored branch/PR", async () => {
+  it("resumes a review dispatch by re-running only the review, on the stored branch", async () => {
     enqueue("d1");
     repo.transition("d1", "building");
-    repo.setPr("d1", "https://github.com/acme/widgets/pull/9");
     repo.transition("d1", "review");
     const { legs, rec } = fakeLegs();
 
@@ -225,8 +228,50 @@ describe("crash recovery", () => {
     expect(repo.get("d1")?.state).toBe("done");
     expect(rec.build).toHaveLength(0);
     expect(rec.review).toHaveLength(1);
-    expect(rec.review[0]?.pr).toBe(9);
     expect(rec.review[0]?.branch).toBe(dispatchBranch(ISSUE));
+  });
+});
+
+describe("session-main merge (ADR 0020)", () => {
+  it("squash-merges a cleanly-reviewed chunk into its session-main branch", async () => {
+    repo.create({
+      id: "d1",
+      issueId: "ISSUE-1",
+      title: "Add a thing",
+      branch: dispatchBranch(ISSUE),
+      spec: "Do the thing.",
+      sessionBranch: "session-main-S1",
+    });
+    const { legs, rec } = fakeLegs({ reviewVerdicts: ["clean"] });
+    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    expect(repo.get("d1")?.state).toBe("done");
+    expect(rec.merge).toHaveLength(1);
+    expect(rec.merge[0]).toMatchObject({ branch: dispatchBranch(ISSUE), sessionBranch: "session-main-S1" });
+  });
+
+  it("does not merge when the dispatch has no session-main branch (legacy build-off-main)", async () => {
+    enqueue("d1"); // no sessionBranch
+    const { legs, rec } = fakeLegs({ reviewVerdicts: ["clean"] });
+    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    expect(repo.get("d1")?.state).toBe("done");
+    expect(rec.merge).toHaveLength(0);
+  });
+
+  it("only merges on a clean review, not while blocking/amending", async () => {
+    repo.create({
+      id: "d1",
+      issueId: "ISSUE-1",
+      title: "Add a thing",
+      branch: dispatchBranch(ISSUE),
+      spec: "Do the thing.",
+      sessionBranch: "session-main-S1",
+    });
+    const { legs, rec } = fakeLegs({ reviewVerdicts: ["blocking", "clean"] });
+    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    expect(rec.merge).toHaveLength(1); // once, after the clean re-review — not on the blocking pass
   });
 });
 
