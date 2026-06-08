@@ -215,6 +215,30 @@ export class PlanDispatchService {
   }
 
   /**
+   * Add a session to an existing feature before approval (ADR 0020 §5b) — the symmetric
+   * counterpart to `removeSession`. Planning-amendable (the repo gates `createSession`).
+   */
+  addSession(featureId: string, sessionId: string, locEstimate?: number): void {
+    this.plan.createSession({ id: sessionId, featureId, locEstimate });
+  }
+
+  /**
+   * Add a dependency edge between two chunks of the same session before approval (ADR 0020
+   * §5b) — the symmetric counterpart to `removeEdge`. Derives the session from the chunks
+   * (both must be in the same one) so the chief gives just the two chunk ids; the repo's
+   * `addEdge` rejects a self-edge or a cycle and gates on `planning`.
+   */
+  addEdge(fromChunkId: string, toChunkId: string): void {
+    const from = this.plan.getChunk(fromChunkId);
+    if (!from) throw new Error(`no chunk ${fromChunkId}`);
+    const to = this.plan.getChunk(toChunkId);
+    if (!to) throw new Error(`no chunk ${toChunkId}`);
+    if (from.sessionId !== to.sessionId)
+      throw new Error(`edge ${fromChunkId} → ${toChunkId} spans sessions — edges are within one session`);
+    this.plan.addEdge(from.sessionId, fromChunkId, toChunkId);
+  }
+
+  /**
    * Approve a feature for build (ADR 0020 slice 2b) — the owner's gate, the chief's `dispatch`
    * call. Moves the feature `planning → ready`, which is what tells the deterministic session
    * loop it may open + launch the feature's sessions. Plan-only and fast: the chief hands off
