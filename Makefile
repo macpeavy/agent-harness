@@ -40,29 +40,36 @@ LOADENV := set -a; source .env; set +a;
 # Create the detached session at the REAL terminal size, not tmux's 80x24 default — else a
 # fixed `-l` pane size (the thin log strip) is computed against 24 lines and then scaled up
 # proportionally on attach, ballooning the strip. tput reads the terminal `make up` runs in.
-SIZE := -x $$(tput cols 2>/dev/null || echo 200) -y $$(tput lines 2>/dev/null || echo 50)
+SIZE := -x $$(tput cols 2> /dev/null || echo 200) -y $$(tput lines 2> /dev/null || echo 50)
 
-.PHONY: up down gateway daemon session-loop chief check migrate db
+.PHONY: up down gateway daemon session-loop chief check migrate db status
 
 up: migrate
-	@if tmux has-session -t $(SESSION) 2>/dev/null; then \
+  # Usage: make up [SESSION=<name>] [LOGS_HEIGHT=<n>]
+  # Creates a detached tmux session with chief agent and supporting panes
+	  # Status pane provides periodic updates
+	  # Fixed 20-line height to fit vertical layouts
+	@if tmux has-session -t ${SESSION} 2> /dev/null; then \
 		echo "session '$(SESSION)' already up — attaching"; \
 	elif [ "$(LOGS_HEIGHT)" -eq 0 ]; then \
-		tmux new-session -d $(SIZE) -s $(SESSION) -n chief 'make chief; $(HOLD)'; \
+		chief=$${tmux new-session -d $(SIZE) -s ${SESSION} -n chief 'make chief; $(HOLD)'}; \
 		tmux new-window -d -t $(SESSION) -n logs 'make gateway; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION):logs 'make daemon; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION):logs 'make session-loop; $(HOLD)'; \
+		tmux split-window -h -p 20 -t $$chief 'watch -n3 make status; $(HOLD)'; \
 	else \
-		chief=$$(tmux new-session -d -P -F '#{pane_id}' $(SIZE) -s $(SESSION) -n stack 'make chief; $(HOLD)'); \
-		tmux split-window -v -b -l $(LOGS_HEIGHT) -t $$chief 'make gateway; $(HOLD)'; \
-		tmux split-window -h -t $(SESSION) 'make daemon; $(HOLD)'; \
-		tmux split-window -h -t $(SESSION) 'make session-loop; $(HOLD)'; \
-		tmux select-pane -t $$chief; \
+		chief=$${tmux new-session -d -P -F '#{pane_id}' $(SIZE) -s ${SESSION} -n stack 'make chief; $(HOLD)'}; \
+		tmux split-window -v -b -l $(LOGS_HEIGHT) -t $${chief} 'make gateway; $(HOLD)'; \
+		tmux split-window -h -t ${SESSION} 'make daemon; $(HOLD)'; \
+		tmux split-window -h -t ${SESSION} 'make session-loop; $(HOLD)'; \
+		# Status pane provides periodic updates; fixed 20-line height
+		tmux split-window -h -p 20 -t $${chief} 'watch -n3 make status; $(HOLD)'; \
+		tmux select-pane -t $${chief}; \
 	fi
 	@tmux attach -t $(SESSION)
 
 down:
-	@tmux kill-session -t $(SESSION) 2>/dev/null && echo "session '$(SESSION)' down" || echo "no session '$(SESSION)'"
+	@tmux kill-session -t $(SESSION) 2> /dev/null && echo "session '$(SESSION)' down" || echo "no session '$(SESSION)'"
 
 gateway:
 	bash -c '$(LOADENV) exec .venv/bin/litellm --config config/litellm.yaml --port $(GATEWAY_PORT)'
@@ -88,3 +95,7 @@ check:
 
 db:
 	bun run db:generate
+
+status:
+	# Display formatted fleet-wide build status
+	bun run ./src/cli/status.ts -
