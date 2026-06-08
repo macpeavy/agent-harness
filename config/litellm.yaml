@@ -30,6 +30,14 @@ model_list:
       model: openrouter/google/gemini-2.5-flash-lite
       api_key: os.environ/OPENROUTER_API_KEY
 
+  # ── Strong builder seat: the builder persona on the strong route (ADR 0013/0014) — for a
+  #    tier-hinted (gnarly) chunk or a tier-promoted escalation. Sonnet; "strong build" is a
+  #    routing choice, not a new persona (same builder.md, stronger model). ~$3 / $15 per M.
+  - model_name: builder-strong
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-4.6
+      api_key: os.environ/OPENROUTER_API_KEY
+
   # ── Strong reviewer seat. ~$3 / $15 per M tokens.
   - model_name: reviewer
     litellm_params:

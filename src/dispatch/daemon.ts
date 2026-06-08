@@ -118,6 +118,7 @@ export class DispatchDaemon {
       body: dispatch.spec,
       surface: dispatch.surface ?? undefined,
       skills: dispatch.skills ?? undefined,
+      tier: dispatch.tier ?? undefined,
     };
 
     const result = await this.legs.build(issue, this.config);

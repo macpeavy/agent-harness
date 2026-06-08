@@ -24,6 +24,7 @@ import { dispatches, type Dispatch } from "./schema";
 import {
   TRANSITIONS,
   nonTerminalStates,
+  type BuildTier,
   type CostLeg,
   type DispatchState,
   type Escalation,
@@ -41,6 +42,8 @@ export interface CreateDispatch {
   surface?: string;
   /** The chief's curated skill names (not the text) for the context pack (ADR 0019). */
   skills?: string[];
+  /** The build tier (ADR 0013/0014) — cheap by default, strong for a tier-hinted/promoted chunk. */
+  tier?: BuildTier;
   route?: string;
 }
 
@@ -125,6 +128,7 @@ export class DispatchRepository {
         spec: rec.spec,
         surface: rec.surface ?? null,
         skills: rec.skills ?? null,
+        tier: rec.tier ?? null,
         state: "queued",
         route: rec.route ?? null,
         amendRounds: 0,

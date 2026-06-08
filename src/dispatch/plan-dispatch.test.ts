@@ -208,22 +208,24 @@ describe("recordOutcomes", () => {
   });
 });
 
-describe("re-dispatch after escalation", () => {
-  it("refuses to re-dispatch a chunk whose dispatch id is taken (escalation loop is a later slice)", () => {
+describe("re-dispatch id allocation", () => {
+  it("gives a re-dispatched chunk a fresh id so its branch can't collide with the prior attempt", () => {
     plan.createFeature(FEATURE);
     plan.addChunk(chunk("a"));
     plan.transitionFeature("F1", "ready");
-    service.dispatchReady("F1");
+    service.dispatchReady("F1"); // dispatch "a"
 
-    // The dispatch escalates; the chief sends the chunk back to 'planned' to re-decompose.
+    // The dispatch escalates; the chief rewinds the chunk to 'planned' and re-dispatches.
     driveTo("a", "escalated");
     service.recordOutcomes("F1");
-    expect(plan.getChunk("a")?.state).toBe("escalated");
     plan.transition("a", "planned");
 
-    // The dispatchId == chunkId invariant means the id is taken — a re-build's branch/PR
-    // strategy is unresolved, so this is an explicit error rather than a branch mismatch.
-    expect(() => service.dispatchReady("F1")).toThrow("re-dispatch");
+    const [made] = service.dispatchReady("F1");
+    // The id "a" is taken by the prior attempt, so the re-dispatch is "a-r2" — a fresh
+    // registry row whose derived branch/worktree can't collide with the first build.
+    expect(made).toEqual({ chunkId: "a", dispatchId: "a-r2" });
+    expect(dispatch.get("a-r2")?.issueId).toBe("a-r2"); // issueId == dispatchId (branch derivation)
+    expect(plan.getChunk("a")?.dispatchId).toBe("a-r2");
   });
 });
 
@@ -315,5 +317,130 @@ describe("decompose", () => {
     expect(() =>
       service.decompose({ feature: FEATURE, chunks: [chunk("a")], edges: [{ from: "a", to: "ghost" }] }),
     ).toThrow("invalid chunk-DAG");
+  });
+});
+
+describe("tier flows to the dispatch (tierHint live, ADR 0013/0014)", () => {
+  it("carries a chunk's tierHint onto its dispatch", () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a", { tierHint: "strong" }));
+    plan.addChunk(chunk("b")); // default cheap
+    plan.transitionFeature("F1", "ready");
+
+    service.dispatchReady("F1");
+
+    expect(dispatch.get("a")?.tier).toBe("strong");
+    expect(dispatch.get("b")?.tier).toBe("cheap");
+  });
+});
+
+describe("promote (tier-promote an escalated chunk)", () => {
+  it("marks the chunk strong and re-dispatches it on a fresh id", () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    plan.transitionFeature("F1", "ready");
+    service.dispatchReady("F1");
+    driveTo("a", "escalated");
+    service.recordOutcomes("F1");
+    expect(plan.getChunk("a")?.state).toBe("escalated");
+
+    const made = service.promote("a");
+
+    expect(made).toEqual({ chunkId: "a", dispatchId: "a-r2" });
+    expect(plan.getChunk("a")?.state).toBe("dispatched");
+    expect(plan.getChunk("a")?.tierHint).toBe("strong");
+    expect(plan.getChunk("a")?.dispatchId).toBe("a-r2");
+    expect(dispatch.get("a-r2")?.tier).toBe("strong"); // built on the strong route
+    expect(dispatch.get("a-r2")?.issueId).toBe("a-r2"); // branch derivation stays consistent
+  });
+
+  it("refuses to promote a chunk that isn't escalated", () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    expect(() => service.promote("a")).toThrow("not escalated");
+  });
+});
+
+describe("redecompose (split an escalated chunk)", () => {
+  function escalate(chunkId: string): void {
+    driveTo(chunkId, "escalated");
+    service.recordOutcomes("F1");
+  }
+
+  it("retires the chunk and the replacements dispatch through the normal path", () => {
+    plan.createDecomposition({ feature: FEATURE, chunks: [chunk("a"), chunk("b")], edges: [{ from: "a", to: "b" }] });
+    plan.transitionFeature("F1", "ready");
+    service.dispatchReady("F1"); // dispatches a (the root)
+    escalate("a");
+
+    const d = service.redecompose("a", {
+      chunks: [chunk("a1"), chunk("a2")],
+      edges: [{ from: "a1", to: "a2" }, { from: "a2", to: "b" }],
+    });
+
+    expect(d).toEqual({ featureId: "F1", chunkIds: ["a1", "a2"], edgeCount: 2 });
+    expect(plan.getChunk("a")?.state).toBe("superseded");
+    // a1 is the new root → ready; dispatch flows it normally.
+    expect(plan.readyChunks("F1").map((c) => c.id)).toEqual(["a1"]);
+    const made = service.dispatchReady("F1");
+    expect(made.map((m) => m.chunkId)).toEqual(["a1"]);
+  });
+
+  it("rejects a re-decomposition that introduces a cycle", () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    plan.transitionFeature("F1", "ready");
+    service.dispatchReady("F1");
+    escalate("a");
+
+    expect(() =>
+      service.redecompose("a", {
+        chunks: [chunk("a1"), chunk("a2")],
+        edges: [{ from: "a1", to: "a2" }, { from: "a2", to: "a1" }],
+      }),
+    ).toThrow("invalid re-decomposition");
+    expect(plan.getChunk("a")?.state).toBe("escalated"); // unchanged
+  });
+
+  it("rejects an edge that references the retired chunk", () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    plan.transitionFeature("F1", "ready");
+    service.dispatchReady("F1");
+    escalate("a");
+
+    expect(() =>
+      service.redecompose("a", { chunks: [chunk("a1")], edges: [{ from: "a", to: "a1" }] }),
+    ).toThrow("references the retired chunk");
+  });
+
+  it("refuses to re-decompose a chunk that isn't escalated", () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    expect(() => service.redecompose("a", { chunks: [chunk("a1")], edges: [] })).toThrow("not escalated");
+  });
+});
+
+describe("feature completes when chunks are done or superseded", () => {
+  it("moves the feature to done once every chunk is done/superseded", () => {
+    plan.createDecomposition({ feature: FEATURE, chunks: [chunk("a"), chunk("b")], edges: [{ from: "a", to: "b" }] });
+    plan.transitionFeature("F1", "ready");
+    service.dispatchReady("F1");
+    driveTo("a", "escalated");
+    service.recordOutcomes("F1");
+
+    // re-decompose a into a1 (a leaf precursor of b); supersede a.
+    service.redecompose("a", { chunks: [chunk("a1")], edges: [{ from: "a1", to: "b" }] });
+    // drive a1, then b, to done.
+    service.dispatchReady("F1"); // a1
+    driveTo("a1", "done");
+    service.recordOutcomes("F1");
+    service.dispatchReady("F1"); // b (now a1 done)
+    driveTo("b", "done");
+    service.recordOutcomes("F1");
+
+    // a superseded, a1 done, b done → feature done.
+    expect(plan.getChunk("a")?.state).toBe("superseded");
+    expect(plan.getFeature("F1")?.state).toBe("done");
   });
 });

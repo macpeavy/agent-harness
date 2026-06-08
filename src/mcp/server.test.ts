@@ -70,9 +70,15 @@ async function isError(name: string, args: Record<string, unknown>): Promise<boo
 }
 
 describe("tool discovery", () => {
-  it("exposes status and dispatch", async () => {
+  it("exposes the full chief toolset", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["decompose", "dispatch", "status"]);
+    expect(tools.map((t) => t.name).sort()).toEqual([
+      "decompose",
+      "dispatch",
+      "promote",
+      "redecompose",
+      "status",
+    ]);
     // The input schema is published so the chief knows the shape.
     const status = tools.find((t) => t.name === "status");
     expect(status?.inputSchema.properties).toHaveProperty("featureId");
@@ -153,11 +159,80 @@ describe("dispatch", () => {
   });
 });
 
+// Escalate the chunk's dispatch the way the daemon would, so the chief tools can resolve it.
+function escalate(chunkId: string): void {
+  dispatch.transition(chunkId, "building");
+  dispatch.escalate(chunkId, "re-decompose");
+  plan.recordOutcome(chunkId, "escalated"); // the service stands in for the daemon reap here
+}
+
+describe("promote", () => {
+  it("tier-promotes an escalated chunk and re-dispatches it on the strong tier", async () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    plan.transitionFeature("F1", "ready");
+    service.dispatchReady("F1");
+    escalate("a");
+
+    const body = await callText("promote", { chunkId: "a" });
+    expect(body).toContain("Tier-promoted chunk a to strong");
+    expect(dispatch.get("a-r2")?.tier).toBe("strong");
+    expect(plan.getChunk("a")?.state).toBe("dispatched");
+  });
+
+  it("returns a tool error promoting a chunk that isn't escalated", async () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    expect(await isError("promote", { chunkId: "a" })).toBe(true);
+  });
+});
+
+describe("redecompose", () => {
+  it("retires an escalated chunk and adds replacements", async () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    plan.transitionFeature("F1", "ready");
+    service.dispatchReady("F1");
+    escalate("a");
+
+    const body = await callText("redecompose", {
+      chunkId: "a",
+      chunks: [
+        { id: "a1", surface: "src/a1.ts", intent: "do a1", contract: "c", acceptance: "t" },
+        { id: "a2", surface: "src/a2.ts", intent: "do a2", contract: "c", acceptance: "t" },
+      ],
+      edges: [{ from: "a1", to: "a2" }],
+    });
+    expect(body).toContain("Re-decomposed chunk a (retired) into 2 chunk(s)");
+    expect(plan.getChunk("a")?.state).toBe("superseded");
+    expect(plan.listChunks("F1").map((c) => c.id)).toEqual(["a", "a1", "a2"]);
+  });
+
+  it("returns a tool error for a cyclic re-decomposition", async () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    plan.transitionFeature("F1", "ready");
+    service.dispatchReady("F1");
+    escalate("a");
+
+    const cyclic = {
+      chunkId: "a",
+      chunks: [
+        { id: "a1", surface: "src/a1.ts", intent: "do a1", contract: "c", acceptance: "t" },
+        { id: "a2", surface: "src/a2.ts", intent: "do a2", contract: "c", acceptance: "t" },
+      ],
+      edges: [{ from: "a1", to: "a2" }, { from: "a2", to: "a1" }],
+    };
+    expect(await isError("redecompose", cyclic)).toBe(true);
+    expect(plan.getChunk("a")?.state).toBe("escalated"); // unchanged
+  });
+});
+
 // The launch path is the real risk for an MCP server (a tool can unit-test green yet not
 // appear over the actual stdio boot OpenCode uses). Spawn the real subprocess the way
 // opencode.json does and confirm the tool list — pointing it at a temp db via SUBSTRATE_DB.
 describe("stdio smoke-boot", () => {
-  it("boots as a subprocess and lists all three tools", async () => {
+  it("boots as a subprocess and lists the full toolset", async () => {
     const smokeDir = mkdtempSync(join(tmpdir(), "ah-mcp-stdio-"));
     const env: Record<string, string> = { SUBSTRATE_DB: join(smokeDir, "substrate.db") };
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
@@ -167,7 +242,13 @@ describe("stdio smoke-boot", () => {
     try {
       await smokeClient.connect(transport);
       const { tools } = await smokeClient.listTools();
-      expect(tools.map((t) => t.name).sort()).toEqual(["decompose", "dispatch", "status"]);
+      expect(tools.map((t) => t.name).sort()).toEqual([
+        "decompose",
+        "dispatch",
+        "promote",
+        "redecompose",
+        "status",
+      ]);
     } finally {
       await smokeClient.close();
       rmSync(smokeDir, { recursive: true, force: true });

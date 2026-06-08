@@ -11,7 +11,7 @@ import { z } from "zod";
 import { PlanRepository } from "../substrate/plan";
 import { DispatchRepository } from "../substrate/dispatch";
 import { PlanDispatchService } from "../dispatch/plan-dispatch";
-import { runStatus, runDispatch, runDecompose } from "./tools";
+import { runStatus, runDispatch, runDecompose, runPromote, runRedecompose } from "./tools";
 
 // The chunk spec the chief authors per chunk (ADR 0014). featureId is omitted — the handler
 // stamps it from the feature, so the chief doesn't repeat it per chunk.
@@ -84,6 +84,39 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
       inputSchema: { featureId: z.string().describe("the feature id to dispatch ready chunks for") },
     },
     async ({ featureId }) => runDispatch(service, featureId),
+  );
+
+  server.registerTool(
+    "promote",
+    {
+      title: "Tier-promote an escalated chunk",
+      description:
+        "Resolve a parked escalated chunk by re-dispatching it on the STRONG build tier " +
+        "(the builder on the strong route). Use when the chunk is sound but too hard for " +
+        "the cheap tier — not when it needs splitting (use redecompose for that).",
+      inputSchema: { chunkId: z.string().describe("the escalated chunk to promote + re-dispatch") },
+    },
+    async ({ chunkId }) => runPromote(service, chunkId),
+  );
+
+  server.registerTool(
+    "redecompose",
+    {
+      title: "Re-decompose an escalated chunk",
+      description:
+        "Resolve a parked escalated chunk by retiring it and replacing it with smaller " +
+        "chunks (it was too big). Provide the replacement chunk specs and the edges among " +
+        "them — and edges reconnecting the retired chunk's former dependents to the new " +
+        "ones. Validated for cycles. The replacements dispatch through the normal path.",
+      inputSchema: {
+        chunkId: z.string().describe("the escalated chunk to retire"),
+        chunks: z.array(chunkSpec).describe("the replacement chunks (featureId is inferred)"),
+        edges: z
+          .array(z.object({ from: z.string(), to: z.string() }))
+          .describe("dependency edges — `to` depends on `from`; may reference surviving chunks"),
+      },
+    },
+    async (input) => runRedecompose(service, input),
   );
 
   return server;

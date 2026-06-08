@@ -27,6 +27,14 @@ export const COST_LEGS = ["build", "review", "amend"] as const;
 export type CostLeg = (typeof COST_LEGS)[number];
 
 /**
+ * The build tier a dispatch runs on (ADR 0013/0014): the cheap builder by default, or the
+ * strong builder for a tier-hinted or tier-promoted chunk. The dispatch context's own
+ * notion; the plan's `TierHint` maps onto it (same values, each context owns its type).
+ */
+export const BUILD_TIERS = ["cheap", "strong"] as const;
+export type BuildTier = (typeof BUILD_TIERS)[number];
+
+/**
  * The allowed state graph (ADR 0009). A state whose array is empty is terminal —
  * the terminal/non-terminal sets are DERIVED from this, never hardcoded.
  */

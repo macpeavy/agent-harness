@@ -107,3 +107,31 @@ export function runStatus(service: PlanDispatchService, featureId: string): Call
 export function runDispatch(service: PlanDispatchService, featureId: string): CallToolResult {
   return guard(() => text(renderDispatched(service.dispatchReady(featureId), featureId)));
 }
+
+/** `promote` — tier-promote an escalated chunk to the strong build tier and re-dispatch it. */
+export function runPromote(service: PlanDispatchService, chunkId: string): CallToolResult {
+  return guard(() => {
+    const made = service.promote(chunkId);
+    return text(`Tier-promoted chunk ${made.chunkId} to strong — re-dispatched as ${made.dispatchId}.`);
+  });
+}
+
+/** The `redecompose` tool's input — the escalated chunk to retire, plus its replacement
+ *  chunks (featureId stamped by the service) and the edges that wire them (incl. reconnecting
+ *  the retired chunk's former dependents). */
+export interface RedecomposeInput {
+  chunkId: string;
+  chunks: Omit<CreateChunk, "featureId">[];
+  edges: { from: string; to: string }[];
+}
+
+/** `redecompose` — retire an escalated chunk and replace it with smaller chunks. */
+export function runRedecompose(service: PlanDispatchService, input: RedecomposeInput): CallToolResult {
+  return guard(() => {
+    const d = service.redecompose(input.chunkId, { chunks: input.chunks, edges: input.edges });
+    return text(
+      `Re-decomposed chunk ${input.chunkId} (retired) into ${d.chunkIds.length} chunk(s) ` +
+        `(${d.edgeCount} edge(s)): ${d.chunkIds.join(", ")}. They dispatch through the normal path.`,
+    );
+  });
+}
