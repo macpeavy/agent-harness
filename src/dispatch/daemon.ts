@@ -32,7 +32,7 @@ export interface DispatchLegs {
 // victory without writing anything; a sharper second ask cheaply rescues some of those.
 const NO_OP_REPROMPT =
   "You reported the task complete, but you changed no files — the diff is empty, so the work is " +
-  "NOT done. Implement the change now: edit the file(s) the issue specifies, then run `git status` " +
+  "NOT done. Implement the change now: edit the file(s) the issue specifies, then run `git diff` " +
   "to confirm the diff is non-empty before you finish. Reading, exploring, or planning is not " +
   "completion. If the change is genuinely impossible as specified, say so explicitly instead.";
 

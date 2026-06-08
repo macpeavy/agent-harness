@@ -39,8 +39,9 @@ export function buildPrompt(issue: Issue, contextPack: string, reprompt?: string
   return (
     context +
     `Implement the following issue by editing files in the current working directory. ` +
-    `Use your tools to make the change, then typecheck/test it. Do NOT run git or open a ` +
-    `pull request — the substrate handles version control for you.\n\n` +
+    `Use your tools to make the change, then typecheck/test it. The only git command you may ` +
+    `run is \`git diff\` (to verify your change is non-empty); do NOT add, commit, push, branch, ` +
+    `or open a pull request — the substrate handles version control for you.\n\n` +
     `Issue ${issue.id}: ${issue.title}\n\n${issue.body}${tail}`
   );
 }
