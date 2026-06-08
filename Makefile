@@ -30,17 +30,27 @@ LOGS_HEIGHT ?= 6
 # prompt to restart) visible instead of vanishing.
 HOLD := exec $${SHELL:-sh}
 
+# Load .env (OPENROUTER_API_KEY, LITELLM_MASTER_KEY) into a command's environment. The
+# gateway, the daemon (its builds call the gateway), and the chief (opencode authenticates
+# to the gateway with LITELLM_MASTER_KEY) all need it.
+LOADENV := set -a; source .env; set +a;
+
+# Create the detached session at the REAL terminal size, not tmux's 80x24 default — else a
+# fixed `-l` pane size (the thin log strip) is computed against 24 lines and then scaled up
+# proportionally on attach, ballooning the strip. tput reads the terminal `make up` runs in.
+SIZE := -x $$(tput cols 2>/dev/null || echo 200) -y $$(tput lines 2>/dev/null || echo 50)
+
 .PHONY: up down gateway daemon chief check db
 
 up:
 	@if tmux has-session -t $(SESSION) 2>/dev/null; then \
 		echo "session '$(SESSION)' already up — attaching"; \
 	elif [ "$(LOGS_HEIGHT)" -eq 0 ]; then \
-		tmux new-session -d -s $(SESSION) -n chief 'make chief; $(HOLD)'; \
+		tmux new-session -d $(SIZE) -s $(SESSION) -n chief 'make chief; $(HOLD)'; \
 		tmux new-window -d -t $(SESSION) -n logs 'make gateway; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION):logs 'make daemon; $(HOLD)'; \
 	else \
-		chief=$$(tmux new-session -d -P -F '#{pane_id}' -s $(SESSION) -n stack 'make chief; $(HOLD)'); \
+		chief=$$(tmux new-session -d -P -F '#{pane_id}' $(SIZE) -s $(SESSION) -n stack 'make chief; $(HOLD)'); \
 		tmux split-window -v -b -l $(LOGS_HEIGHT) -t $$chief 'make gateway; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION) 'make daemon; $(HOLD)'; \
 		tmux select-pane -t $$chief; \
@@ -51,13 +61,13 @@ down:
 	@tmux kill-session -t $(SESSION) 2>/dev/null && echo "session '$(SESSION)' down" || echo "no session '$(SESSION)'"
 
 gateway:
-	bash -c 'set -a; source .env; set +a; exec .venv/bin/litellm --config config/litellm.yaml --port $(GATEWAY_PORT)'
+	bash -c '$(LOADENV) exec .venv/bin/litellm --config config/litellm.yaml --port $(GATEWAY_PORT)'
 
 daemon:
-	bun run daemon
+	bash -c '$(LOADENV) exec bun run daemon'
 
 chief:
-	opencode --agent chief
+	bash -c '$(LOADENV) exec opencode --agent chief'
 
 check:
 	bun run typecheck
