@@ -204,6 +204,12 @@ export class PlanRepository {
     return this.db.select().from(sessions).where(eq(sessions.featureId, featureId)).orderBy(asc(sessions.createdAt)).all();
   }
 
+  /** Every session across all features, oldest first — what the session loop sweeps to find
+   *  the sessions of approved features it should open + advance (ADR 0020 slice 2b). */
+  listAllSessions(): Session[] {
+    return this.db.select().from(sessions).orderBy(asc(sessions.createdAt)).all();
+  }
+
   /** Move a session to a new state, validated against the session graph (transactional). */
   transitionSession(id: string, to: SessionState): void {
     this.db.transaction((tx) => {

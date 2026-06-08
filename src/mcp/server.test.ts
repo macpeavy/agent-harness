@@ -136,16 +136,14 @@ describe("status", () => {
 });
 
 describe("dispatch", () => {
-  it("approves the feature and dispatches a session's ready chunks (calling dispatch IS the go)", async () => {
+  it("approves the feature for build (calling dispatch IS the go; the loop launches it)", async () => {
     seedFeatureSession();
     plan.addChunk(chunk("a"));
-    plan.addChunk(chunk("b"));
 
-    const body = await callText("dispatch", { sessionId: "S1" }); // no prior approval step
-    expect(body).toContain("Dispatched 2 ready chunk(s) for session S1");
-    expect(plan.getChunk("a")?.state).toBe("dispatched");
-    expect(plan.getFeature("F1")?.state).toBe("building"); // planning → ready → building
-    expect(plan.getSession("S1")?.state).toBe("building");
+    const body = await callText("dispatch", { sessionId: "S1" });
+    expect(body).toContain("Approved feature F1");
+    expect(plan.getFeature("F1")?.state).toBe("ready"); // approved; the loop (not dispatch) launches
+    expect(plan.getChunk("a")?.state).toBe("planned"); // dispatch no longer materialises directly
   });
 
   it("returns a tool error for an unknown session", async () => {

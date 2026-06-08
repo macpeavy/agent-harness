@@ -246,3 +246,20 @@ describe("status (feature → sessions → chunks)", () => {
     expect(s.sessions[0]?.escalations).toEqual([{ chunkId: "a", dispatchId: "a", kind: "re-decompose" }]);
   });
 });
+
+describe("approve (the owner gate, ADR 0020 slice 2b)", () => {
+  it("moves the feature planning → ready and is idempotent", () => {
+    plan.createFeature(FEATURE);
+    plan.createSession({ id: "S1", featureId: "F1" });
+
+    expect(service.approve("S1")).toEqual({ featureId: "F1" });
+    expect(plan.getFeature("F1")?.state).toBe("ready");
+    // idempotent — approving again is a no-op, not an illegal transition.
+    expect(() => service.approve("S1")).not.toThrow();
+    expect(plan.getFeature("F1")?.state).toBe("ready");
+  });
+
+  it("throws for an unknown session", () => {
+    expect(() => service.approve("ghost")).toThrow("no session");
+  });
+});

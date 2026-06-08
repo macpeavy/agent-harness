@@ -5,7 +5,7 @@
 // in the service; this is the thin surface an OpenCode agent reaches it through.
 
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { Decomposed, FeatureStatus, MaterialisedDispatch, PlanDispatchService } from "../dispatch/plan-dispatch";
+import type { Decomposed, FeatureStatus, PlanDispatchService } from "../dispatch/plan-dispatch";
 import type { CreateChunk, CreateDecomposition, CreateFeature } from "../substrate/plan";
 
 /**
@@ -78,14 +78,6 @@ export function renderFeatureStatus(s: FeatureStatus): string {
   return lines.join("\n");
 }
 
-/** Render the result of a dispatch call. */
-export function renderDispatched(made: MaterialisedDispatch[], sessionId: string): string {
-  if (made.length === 0) return `No ready chunks to dispatch for session ${sessionId}.`;
-  const lines = [`Dispatched ${made.length} ready chunk(s) for session ${sessionId}:`];
-  for (const m of made) lines.push(`  chunk ${m.chunkId} → dispatch ${m.dispatchId}`);
-  return lines.join("\n");
-}
-
 /** Render the result of a decompose call. */
 export function renderDecomposed(d: Decomposed): string {
   return (
@@ -114,9 +106,16 @@ export function runStatus(service: PlanDispatchService, featureId: string): Call
   return guard(() => text(renderFeatureStatus(service.status(featureId))));
 }
 
-/** `dispatch` — approve the feature and materialise a session's ready chunks (ADR 0020). */
+/** `dispatch` — approve the feature for build (ADR 0020 slice 2b). The session loop then opens
+ *  session-main and launches the chunks; the chief hands off and steps back. */
 export function runDispatch(service: PlanDispatchService, sessionId: string): CallToolResult {
-  return guard(() => text(renderDispatched(service.dispatchReady(sessionId), sessionId)));
+  return guard(() => {
+    const { featureId } = service.approve(sessionId);
+    return text(
+      `Approved feature ${featureId} (via session ${sessionId}). The session loop will open ` +
+        `session-main, launch the ready chunks, and build them into the session PR. Use status to watch.`,
+    );
+  });
 }
 
 /** `promote` — tier-promote an escalated chunk to the strong build tier and re-dispatch it. */
