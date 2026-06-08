@@ -50,6 +50,18 @@ export class OpencodeClient {
     return s.id;
   }
 
+  /**
+   * Delete a session and all its data (the terminal reaper, ADR 0009/0019). Idempotent:
+   * a 404 (already gone) is treated as success, so re-running a sweep is safe. Other
+   * non-OK statuses still throw — a real failure shouldn't be silently swallowed.
+   */
+  async deleteSession(sessionID: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/session/${sessionID}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 404) {
+      throw new Error(`DELETE /session/${sessionID} → ${res.status} ${await res.text()}`);
+    }
+  }
+
   /** Send a prompt and block until the assistant reply completes. */
   async sendMessage(sessionID: string, text: string): Promise<AssistantReply> {
     const m = (await this.post(`/session/${sessionID}/message`, {

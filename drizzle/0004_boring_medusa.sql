@@ -1,0 +1,1 @@
+ALTER TABLE `dispatches` ADD `reaped_at` integer;
