@@ -66,13 +66,11 @@ export interface CreateChunk {
   tierHint?: TierHint;
 }
 
-/** A session + its chunk-DAG the chief authored in one `decompose` pass (ADR 0019/0020).
- *  The feature is created with it; the chunks belong to the session. */
-export interface CreateDecomposition {
+/** A feature meta-decomposed into its sessions (ADR 0020 §2, pass 1) — the chief's first
+ *  decompose pass: the feature + its ~1k-LOC session boundaries, no chunks yet. */
+export interface CreateMetaDecomposition {
   feature: CreateFeature;
-  session: { id: string; locEstimate?: number };
-  chunks: CreateChunk[];
-  edges: { from: string; to: string }[];
+  sessions: { id: string; locEstimate?: number }[];
 }
 
 /** The session's session-main branch + PR linkage (populated by slice 2). */
@@ -150,20 +148,30 @@ export class PlanRepository {
   }
 
   /**
-   * Write a feature + a session + the session's chunk-DAG in one transaction — the chief's
-   * `decompose` output (ADR 0019/0020), so a feature never half-lands. Assumes a
-   * pre-validated DAG (the service runs `validateDag`); FK/unique constraints are the
-   * backstop. Throws (rolling back) if any id collides or an FK is unmet.
+   * Write a feature + its sessions in one transaction — the chief's meta-decompose (ADR 0020
+   * pass 1), so a feature never half-lands. Sessions start empty (planning); their chunk-DAGs
+   * are added per session by `addChunkDag` (pass 2). FK/unique constraints are the backstop.
    */
-  createDecomposition(input: CreateDecomposition): void {
+  createMetaDecomposition(input: CreateMetaDecomposition): void {
     const now = Date.now();
     this.db.transaction((tx) => {
       tx.insert(features).values(featureValues(input.feature, now)).run();
-      tx.insert(sessions)
-        .values(sessionValues({ id: input.session.id, featureId: input.feature.id, locEstimate: input.session.locEstimate }, now))
-        .run();
-      for (const c of input.chunks) tx.insert(chunks).values(chunkValues(c, now)).run();
-      for (const e of input.edges) tx.insert(edges).values(edgeValues(input.session.id, e.from, e.to, now)).run();
+      for (const s of input.sessions)
+        tx.insert(sessions).values(sessionValues({ id: s.id, featureId: input.feature.id, locEstimate: s.locEstimate }, now)).run();
+    });
+  }
+
+  /**
+   * Add a session's chunk-DAG in one transaction — the chief's per-session decompose (ADR
+   * 0020 pass 2). Planning-amendable: the parent feature must be in `planning`. Assumes a
+   * pre-validated DAG (the service runs `validateDag`); FK/unique constraints are the backstop.
+   */
+  addChunkDag(sessionId: string, newChunks: CreateChunk[], newEdges: { from: string; to: string }[]): void {
+    this.db.transaction((tx) => {
+      this.requireFeaturePlanning(tx, this.featureIdForSession(tx, sessionId));
+      const now = Date.now();
+      for (const c of newChunks) tx.insert(chunks).values(chunkValues(c, now)).run();
+      for (const e of newEdges) tx.insert(edges).values(edgeValues(sessionId, e.from, e.to, now)).run();
     });
   }
 

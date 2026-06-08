@@ -156,32 +156,29 @@ describe("planning-amendable (ADR 0020)", () => {
   });
 });
 
-describe("createDecomposition (transactional: feature + session + DAG)", () => {
-  it("writes the feature, the session, and the chunk-DAG in one shot", () => {
-    plan.createDecomposition({
-      feature: FEATURE,
-      session: { id: "S1", locEstimate: 800 },
-      chunks: [chunk("a"), chunk("b")],
-      edges: [{ from: "a", to: "b" }],
-    });
+describe("createMetaDecomposition + addChunkDag (two-level, ADR 0020)", () => {
+  it("meta-decomposes a feature into sessions, then fills a session's DAG", () => {
+    plan.createMetaDecomposition({ feature: FEATURE, sessions: [{ id: "S1", locEstimate: 800 }, { id: "S2" }] });
 
     expect(plan.getFeature("F1")?.state).toBe("planning");
+    expect(plan.listSessions("F1").map((s) => s.id)).toEqual(["S1", "S2"]);
     expect(plan.getSession("S1")?.locEstimate).toBe(800);
+
+    plan.addChunkDag("S1", [chunk("a"), chunk("b")], [{ from: "a", to: "b" }]);
     expect(plan.listChunks("S1").map((c) => c.id)).toEqual(["a", "b"]);
     expect(plan.readyChunks("S1").map((c) => c.id)).toEqual(["a"]); // a→b edge landed
   });
 
-  it("rolls back the whole batch on a mid-write failure (atomic)", () => {
-    expect(() =>
-      plan.createDecomposition({
-        feature: FEATURE,
-        session: { id: "S1" },
-        chunks: [chunk("a"), chunk("a")], // duplicate id → PK abort
-        edges: [],
-      }),
-    ).toThrow();
-    expect(plan.getFeature("F1")).toBeNull();
-    expect(plan.getSession("S1")).toBeNull();
+  it("rolls back a session's DAG on a mid-write failure (atomic)", () => {
+    plan.createMetaDecomposition({ feature: FEATURE, sessions: [{ id: "S1" }] });
+    expect(() => plan.addChunkDag("S1", [chunk("a"), chunk("a")], [])).toThrow(); // dup id → PK abort
+    expect(plan.listChunks("S1")).toEqual([]);
+  });
+
+  it("addChunkDag is planning-amendable — rejected once the feature is approved", () => {
+    plan.createMetaDecomposition({ feature: FEATURE, sessions: [{ id: "S1" }] });
+    plan.transitionFeature("F1", "ready");
+    expect(() => plan.addChunkDag("S1", [chunk("a")], [])).toThrow("not amendable");
   });
 });
 
@@ -221,12 +218,8 @@ describe("setTierHint", () => {
 
 describe("redecompose (session-scoped)", () => {
   it("retires the escalated chunk, drops its edges, adds replacements within the session", () => {
-    plan.createDecomposition({
-      feature: FEATURE,
-      session: { id: "S1" },
-      chunks: [chunk("a"), chunk("b")],
-      edges: [{ from: "a", to: "b" }],
-    });
+    plan.createMetaDecomposition({ feature: FEATURE, sessions: [{ id: "S1" }] });
+    plan.addChunkDag("S1", [chunk("a"), chunk("b")], [{ from: "a", to: "b" }]);
     plan.transition("a", "dispatched");
     plan.transition("a", "escalated");
 
