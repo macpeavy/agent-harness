@@ -12,6 +12,8 @@ import { PlanRepository } from "../substrate/plan";
 import { DispatchRepository } from "../substrate/dispatch";
 import { PlanDispatchService } from "../dispatch/plan-dispatch";
 import { loadConfig } from "../config";
+import { DEFAULT_DECOMPOSITION, loadDecompositionConfig, type DecompositionConfig } from "../decomposition-config";
+import { chunkGuidance, sessionGuidance } from "../dispatch/decompose-context";
 import { runReadPrReviewLeg } from "../dispatch/legs/pr-review";
 import {
   runStatus,
@@ -51,6 +53,9 @@ const chunkSpec = z.object({
  *  absent → the tool returns a configuration error). */
 export interface SubstrateServerOptions {
   readPrReview?: PrReviewReader;
+  /** The soft size dials (ADR 0022) surfaced into the decompose tool descriptions the chief
+   *  reads. Defaults to the seed values; the main block loads config/decomposition.yaml. */
+  decomposition?: DecompositionConfig;
 }
 
 /**
@@ -58,6 +63,7 @@ export interface SubstrateServerOptions {
  * link it to an in-memory client without spawning a process.
  */
 export function createSubstrateServer(service: PlanDispatchService, opts: SubstrateServerOptions = {}): McpServer {
+  const decomposition = opts.decomposition ?? DEFAULT_DECOMPOSITION;
   const server = new McpServer({ name: "substrate", version: "0.1.0" });
 
   server.registerTool(
@@ -65,10 +71,10 @@ export function createSubstrateServer(service: PlanDispatchService, opts: Substr
     {
       title: "Meta-decompose a feature into sessions",
       description:
-        "Pass 1 of two-level decomposition (ADR 0020): write the feature + its ~1k-LOC SESSION " +
+        "Pass 1 of two-level decomposition (ADR 0020): write the feature + its SESSION " +
         "boundaries to the plan — no chunks yet. Each session is a reviewable unit that gets " +
-        "one session-main PR. A small feature is one session; a large one is several. Then " +
-        "decompose each session (the `decompose` tool) into its chunk-DAG.",
+        "one session-main PR. Then decompose each session (the `decompose` tool) into its " +
+        `chunk-DAG.\n\n${sessionGuidance(decomposition)}`,
       inputSchema: {
         feature: z
           .object({
@@ -81,7 +87,7 @@ export function createSubstrateServer(service: PlanDispatchService, opts: Substr
           .array(
             z.object({
               id: z.string().describe("unique session id (becomes the session-main branch id)"),
-              locEstimate: z.number().optional().describe("the chief's ~1k-LOC target for this session"),
+              locEstimate: z.number().optional().describe("the chief's session size target (see sessionTargetLines)"),
             }),
           )
           .describe("the session boundaries (one for a small feature, several for a large one)"),
@@ -99,7 +105,7 @@ export function createSubstrateServer(service: PlanDispatchService, opts: Substr
         "chunks (each a full ADR 0014 spec) + dependency edges (`to` depends on `from`). The " +
         "session must already exist (from meta_decompose). To add ONE chunk to a session later " +
         "(during revision), use `add_chunk`, not this. Validated for cycles/unknown refs. " +
-        "Plan-only — nothing dispatches until the owner approves.",
+        `Plan-only — nothing dispatches until the owner approves.\n\n${chunkGuidance(decomposition)}`,
       inputSchema: {
         sessionId: z.string().describe("the session to decompose (from meta_decompose)"),
         chunks: z.array(chunkSpec).describe("the chunks of this session"),
@@ -140,13 +146,13 @@ export function createSubstrateServer(service: PlanDispatchService, opts: Substr
       title: "Add a session to a feature",
       description:
         "Add ONE session to an existing feature before approval (ADR 0020 §5b) — the symmetric " +
-        "counterpart to `remove_session`, for when the plan needs another ~1k-LOC reviewable unit " +
+        "counterpart to `remove_session`, for when the plan needs another reviewable unit " +
         "(use `meta_decompose` for the initial set). Decompose it afterward into its chunk-DAG. " +
-        "Allowed while the feature is in planning; frozen once approved.",
+        `Allowed while the feature is in planning; frozen once approved.\n\n${sessionGuidance(decomposition)}`,
       inputSchema: {
         featureId: z.string().describe("the feature to add the session to"),
         sessionId: z.string().describe("unique session id (becomes the session-main branch id)"),
-        locEstimate: z.number().optional().describe("the chief's ~1k-LOC target for this session"),
+        locEstimate: z.number().optional().describe("the chief's session size target (see sessionTargetLines)"),
       },
     },
     async (input) => runAddSession(service, input),
@@ -330,6 +336,8 @@ if (import.meta.main) {
   // The real PR-review reader, resolved lazily so booting (and the stdio smoke test) doesn't
   // require full gateway/gh config — only an actual address_review call loads it.
   const readPrReview: PrReviewReader = async (prNumber) => runReadPrReviewLeg(prNumber, await loadConfig());
-  const server = createSubstrateServer(service, { readPrReview });
+  // Load the decomposition dials (ADR 0022) so the meta_decompose / decompose tool descriptions
+  // the chief reads carry the configured soft targets — falls back to the seed defaults if absent.
+  const server = createSubstrateServer(service, { readPrReview, decomposition: loadDecompositionConfig() });
   await server.connect(new StdioServerTransport());
 }

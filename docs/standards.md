@@ -68,9 +68,12 @@ The rule a service-layer change must hold: **SQL lives only in a repository.** A
 the loop calls `repository.transition(...)`, never a query builder.
 
 - **One responsibility per module.** A file does one job and says so in its top comment.
-- **One file per chunk.** A unit of build work targets a single file (the natural chunk
-  boundary — see ADR 0014). Don't sprawl a change across many files; if it needs to,
-  it's more than one chunk.
+- **Chunk granularity lives elsewhere — don't freeze a number here (ADR 0022).** The size a
+  chunk targets is a *soft dial* (`chunkTargetLines` in `config/decomposition.yaml`, tuned by
+  the instrument), and the hard rule is a *correctness invariant* the chief judges — *no two
+  parallel chunks touch the same file* (a one-liner rides with its consumer; see
+  `agents/chief.md`). This file points at both; it never restates a granularity number, so the
+  rule can't drift between two places (the bug ADR 0022 fixed).
 - **Helpers stay local until reused.** A function used in one module is not exported
   (e.g. `slugify` in `dispatch/legs/build.ts`). Promote to `util/` only on the second use.
 - **Imports are relative within `src/`** (`../opencode/client`), no path aliases.
