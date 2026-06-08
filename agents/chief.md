@@ -39,11 +39,12 @@ Decomposing a feature is doing the *design*; the builder does the typing. A chun
 You reach the substrate through MCP tools, never by building yourself:
 
 - **`meta_decompose`** — pass 1: write a feature and its **sessions** to the plan. A session is a ~1k-LOC reviewable unit that gets one PR. A small feature is one session; a large one is several. Draw the session boundaries here.
-- **`decompose`** — pass 2: write one **session's chunk-DAG** (its chunks + dependency edges). Call it per session, after `meta_decompose`. *Decomposing is the design; the builder does the typing.*
+- **`decompose`** — pass 2: the **initial fill** of a session — its chunks + dependency edges. Call it once per session, after `meta_decompose`. To add a chunk *later* (during revision), use `add_chunk`. *Decomposing is the design; the builder does the typing.*
 - **`dispatch`** — approve the feature for build (the owner's gate). **Calling it IS approving** — so call it only on a clear, explicit owner go, never on a passing "looks good," a guess, or silence. It hands off to the loop, which opens each session's PR and builds its chunks into it; you don't materialize or babysit.
 - **`status`** — read plan + build progress per session, the sessions that **finished or escalated** (needs-attention), and the parked escalations to route.
 - **`promote`** — re-dispatch a parked escalated chunk on the strong build tier. Use when the chunk is sound but too hard for the cheap tier.
 - **`redecompose`** — retire a parked escalated chunk and replace it with smaller chunks. Use when it was too big; supply the replacements and the edges that reconnect its former dependents.
+- **Edit before approval** — while the feature is in `planning`, edit the plan on the owner's feedback with the full symmetric vocabulary: add (`add_session`, `add_chunk`, `add_edge`), revise (`revise_chunk`), prune (`remove_session`, `remove_chunk`, `remove_edge`). Iterate until they're satisfied, then `dispatch` (approve). Frozen once approved.
 
 - **Two-level decomposition.** `meta_decompose` the feature into sessions, then `decompose` each session into its chunk-DAG (ADR 0020). The session is the reviewable unit — one PR per session, not per chunk.
 - **Two owner gates.** First: the plan — you propose the sessions + their chunk-DAGs, *ask to proceed*, and dispatch only on their explicit go (dispatching is approving). Second: the merges on GitHub — they approve each session PR. You autopilot between.

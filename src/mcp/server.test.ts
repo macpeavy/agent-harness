@@ -86,11 +86,18 @@ describe("tool discovery", () => {
   it("exposes the full chief toolset", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
+      "add_chunk",
+      "add_edge",
+      "add_session",
       "decompose",
       "dispatch",
       "meta_decompose",
       "promote",
       "redecompose",
+      "remove_chunk",
+      "remove_edge",
+      "remove_session",
+      "revise_chunk",
       "status",
     ]);
     const dispatchTool = tools.find((t) => t.name === "dispatch");
@@ -212,6 +219,67 @@ describe("redecompose", () => {
   });
 });
 
+describe("add + revise + prune before approval (ADR 0020 §5b)", () => {
+  it("adds a chunk to an existing session, wired with an edge", async () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+
+    const body = await callText("add_chunk", {
+      sessionId: "S1",
+      chunk: { id: "b", surface: "src/b.ts", intent: "do b", contract: "c", acceptance: "t" },
+      edges: [{ from: "a", to: "b" }],
+    });
+    expect(body).toContain("Added chunk b to session S1");
+    expect(plan.listChunks("S1").map((c) => c.id)).toEqual(["a", "b"]);
+  });
+
+  it("adds a session to a feature and an edge between two chunks (full symmetry)", async () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    plan.addChunk(chunk("b"));
+
+    const addedSession = await callText("add_session", { featureId: "F1", sessionId: "S2", locEstimate: 600 });
+    expect(addedSession).toContain("Added session S2 to feature F1");
+    expect(plan.listSessions("F1").map((s) => s.id)).toEqual(["S1", "S2"]);
+
+    const addedEdge = await callText("add_edge", { from: "a", to: "b" });
+    expect(addedEdge).toContain("Added edge a → b");
+    expect(plan.listEdges("S1")).toEqual([{ from: "a", to: "b" }]);
+  });
+
+  it("returns a tool error adding a cross-session edge", async () => {
+    seedFeatureSession();
+    plan.createSession({ id: "S2", featureId: "F1" });
+    plan.addChunk(chunk("a"));
+    plan.addChunk(chunk("b", { sessionId: "S2" }));
+
+    expect(await isError("add_edge", { from: "a", to: "b" })).toBe(true);
+  });
+
+  it("revises a chunk and prunes a session while the feature is planning", async () => {
+    seedFeatureSession();
+    plan.createSession({ id: "S2", featureId: "F1" });
+    plan.addChunk(chunk("a"));
+
+    const revised = await callText("revise_chunk", { chunkId: "a", contract: "export function a(n: number): void" });
+    expect(revised).toContain("Revised chunk a");
+    expect(plan.getChunk("a")?.contract).toBe("export function a(n: number): void");
+
+    const removed = await callText("remove_session", { sessionId: "S2" });
+    expect(removed).toContain("Removed session S2");
+    expect(plan.getSession("S2")).toBeNull();
+  });
+
+  it("returns a tool error once the feature is approved (frozen)", async () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    plan.transitionFeature("F1", "ready"); // approved
+
+    expect(await isError("revise_chunk", { chunkId: "a", contract: "x" })).toBe(true);
+    expect(await isError("remove_chunk", { chunkId: "a" })).toBe(true);
+  });
+});
+
 // The launch path is the real risk for an MCP server (a tool can unit-test green yet not
 // appear over the actual stdio boot OpenCode uses). Spawn the real subprocess the way
 // opencode.json does and confirm the tool list — pointing it at a temp db via SUBSTRATE_DB.
@@ -227,11 +295,18 @@ describe("stdio smoke-boot", () => {
       await smokeClient.connect(transport);
       const { tools } = await smokeClient.listTools();
       expect(tools.map((t) => t.name).sort()).toEqual([
+        "add_chunk",
+        "add_edge",
+        "add_session",
         "decompose",
         "dispatch",
         "meta_decompose",
         "promote",
         "redecompose",
+        "remove_chunk",
+        "remove_edge",
+        "remove_session",
+        "revise_chunk",
         "status",
       ]);
     } finally {

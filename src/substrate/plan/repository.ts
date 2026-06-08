@@ -73,6 +73,18 @@ export interface CreateMetaDecomposition {
   sessions: { id: string; locEstimate?: number }[];
 }
 
+/** A revision to a planned chunk's spec (ADR 0020 §5b) — only the fields given change. */
+export interface ReviseChunk {
+  surface?: string;
+  intent?: string;
+  contract?: string;
+  acceptance?: string;
+  dataShapes?: string;
+  preResolved?: string;
+  outOfScope?: string;
+  tierHint?: TierHint;
+}
+
 /** The session's session-main branch + PR linkage (populated by slice 2). */
 export interface SessionLinks {
   branch?: string;
@@ -303,6 +315,65 @@ export class PlanRepository {
     const row = this.db.select({ id: chunks.id }).from(chunks).where(eq(chunks.id, id)).get();
     if (!row) throw new Error(`no chunk ${id}`);
     this.db.update(chunks).set({ tierHint: tier, updatedAt: Date.now() }).where(eq(chunks.id, id)).run();
+  }
+
+  // --- planning-amendable: revise + prune (ADR 0020 §5b) ---
+  // The chief iterates the plan with the owner BEFORE approval. All four are gated on the
+  // parent feature being in `planning` (frozen once approved), so a built/approved plan is
+  // never edited out from under the loop.
+
+  /** Re-spec a planned chunk (change only the fields given). Planning-amendable. */
+  reviseChunk(id: string, spec: ReviseChunk): void {
+    this.db.transaction((tx) => {
+      const row = tx.select({ sessionId: chunks.sessionId }).from(chunks).where(eq(chunks.id, id)).get();
+      if (!row) throw new Error(`no chunk ${id}`);
+      this.requireFeaturePlanning(tx, this.featureIdForSession(tx, row.sessionId));
+
+      const values: Partial<NewChunk> = { updatedAt: Date.now() };
+      if (spec.surface !== undefined) values.surface = spec.surface;
+      if (spec.intent !== undefined) values.intent = spec.intent;
+      if (spec.contract !== undefined) values.contract = spec.contract;
+      if (spec.acceptance !== undefined) values.acceptance = spec.acceptance;
+      if (spec.dataShapes !== undefined) values.dataShapes = spec.dataShapes;
+      if (spec.preResolved !== undefined) values.preResolved = spec.preResolved;
+      if (spec.outOfScope !== undefined) values.outOfScope = spec.outOfScope;
+      if (spec.tierHint !== undefined) values.tierHint = spec.tierHint;
+      tx.update(chunks).set(values).where(eq(chunks.id, id)).run();
+    });
+  }
+
+  /** Remove a planned chunk and every edge touching it. Planning-amendable. */
+  removeChunk(id: string): void {
+    this.db.transaction((tx) => {
+      const row = tx.select({ sessionId: chunks.sessionId }).from(chunks).where(eq(chunks.id, id)).get();
+      if (!row) throw new Error(`no chunk ${id}`);
+      this.requireFeaturePlanning(tx, this.featureIdForSession(tx, row.sessionId));
+      tx.delete(edges).where(or(eq(edges.fromChunkId, id), eq(edges.toChunkId, id))).run();
+      tx.delete(chunks).where(eq(chunks.id, id)).run();
+    });
+  }
+
+  /** Remove a session and its whole sub-plan (its chunks + edges). Planning-amendable. */
+  removeSession(id: string): void {
+    this.db.transaction((tx) => {
+      const row = tx.select({ featureId: sessions.featureId }).from(sessions).where(eq(sessions.id, id)).get();
+      if (!row) throw new Error(`no session ${id}`);
+      this.requireFeaturePlanning(tx, row.featureId);
+      tx.delete(edges).where(eq(edges.sessionId, id)).run();
+      tx.delete(chunks).where(eq(chunks.sessionId, id)).run();
+      tx.delete(sessions).where(eq(sessions.id, id)).run();
+    });
+  }
+
+  /** Remove a single dependency edge (`from`→`to`). Planning-amendable. */
+  removeEdge(fromChunkId: string, toChunkId: string): void {
+    this.db.transaction((tx) => {
+      const match = and(eq(edges.fromChunkId, fromChunkId), eq(edges.toChunkId, toChunkId));
+      const row = tx.select({ sessionId: edges.sessionId }).from(edges).where(match).get();
+      if (!row) throw new Error(`no edge ${fromChunkId}->${toChunkId}`);
+      this.requireFeaturePlanning(tx, this.featureIdForSession(tx, row.sessionId));
+      tx.delete(edges).where(match).run();
+    });
   }
 
   /**

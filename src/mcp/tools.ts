@@ -6,7 +6,7 @@
 
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Decomposed, FeatureStatus, PlanDispatchService } from "../dispatch/plan-dispatch";
-import type { CreateChunk, CreateMetaDecomposition } from "../substrate/plan";
+import type { CreateChunk, CreateMetaDecomposition, ReviseChunk } from "../substrate/plan";
 
 /** The `meta_decompose` tool's input — the feature + its ~1k-LOC session boundaries (ADR 0020
  *  pass 1). No chunks yet; each session is filled by `decompose`. Mirrors CreateMetaDecomposition. */
@@ -113,6 +113,79 @@ export function renderDecomposed(d: Decomposed): string {
 /** `decompose` — write a session's chunk-DAG to the plan (pass 2; validated; plan-only). */
 export function runDecompose(service: PlanDispatchService, input: DecomposeInput): CallToolResult {
   return guard(() => text(renderDecomposed(service.decompose(input))));
+}
+
+/** The `add_chunk` tool's input — one chunk to add to an existing session, plus optional
+ *  edges wiring it to that session's chunks. */
+export interface AddChunkInput {
+  sessionId: string;
+  chunk: Omit<CreateChunk, "sessionId">;
+  edges?: { from: string; to: string }[];
+}
+
+/** `add_chunk` — add one chunk to an existing session before approval (ADR 0020 §5b). */
+export function runAddChunk(service: PlanDispatchService, input: AddChunkInput): CallToolResult {
+  return guard(() => {
+    const { chunkId, sessionId } = service.addChunk(input);
+    return text(`Added chunk ${chunkId} to session ${sessionId} (${input.edges?.length ?? 0} edge(s)).`);
+  });
+}
+
+/** `revise_chunk` — re-spec a planned chunk before approval (ADR 0020 §5b). */
+export function runReviseChunk(service: PlanDispatchService, input: { chunkId: string } & ReviseChunk): CallToolResult {
+  return guard(() => {
+    const { chunkId, ...spec } = input;
+    service.reviseChunk(chunkId, spec);
+    return text(`Revised chunk ${chunkId} (${Object.keys(spec).join(", ") || "no fields"}).`);
+  });
+}
+
+/** The `add_session` tool's input — a new session to add to an existing feature. */
+export interface AddSessionInput {
+  featureId: string;
+  sessionId: string;
+  locEstimate?: number;
+}
+
+/** `add_session` — add a session to an existing feature before approval (ADR 0020 §5b). */
+export function runAddSession(service: PlanDispatchService, input: AddSessionInput): CallToolResult {
+  return guard(() => {
+    service.addSession(input.featureId, input.sessionId, input.locEstimate);
+    const loc = input.locEstimate ? ` (~${input.locEstimate} LOC)` : "";
+    return text(`Added session ${input.sessionId} to feature ${input.featureId}${loc}. Decompose it into its chunk-DAG.`);
+  });
+}
+
+/** `add_edge` — add one dependency edge between two chunks of a session before approval. */
+export function runAddEdge(service: PlanDispatchService, fromChunkId: string, toChunkId: string): CallToolResult {
+  return guard(() => {
+    service.addEdge(fromChunkId, toChunkId);
+    return text(`Added edge ${fromChunkId} → ${toChunkId}.`);
+  });
+}
+
+/** `remove_chunk` — drop a planned chunk (and its edges) before approval. */
+export function runRemoveChunk(service: PlanDispatchService, chunkId: string): CallToolResult {
+  return guard(() => {
+    service.removeChunk(chunkId);
+    return text(`Removed chunk ${chunkId} (and any edges touching it).`);
+  });
+}
+
+/** `remove_session` — drop a session and its whole sub-plan before approval. */
+export function runRemoveSession(service: PlanDispatchService, sessionId: string): CallToolResult {
+  return guard(() => {
+    service.removeSession(sessionId);
+    return text(`Removed session ${sessionId} (and its chunks + edges).`);
+  });
+}
+
+/** `remove_edge` — drop one dependency edge before approval. */
+export function runRemoveEdge(service: PlanDispatchService, fromChunkId: string, toChunkId: string): CallToolResult {
+  return guard(() => {
+    service.removeEdge(fromChunkId, toChunkId);
+    return text(`Removed edge ${fromChunkId} → ${toChunkId}.`);
+  });
 }
 
 /** `status` — a read-only digest of a feature's sessions + their dispatch progress. */

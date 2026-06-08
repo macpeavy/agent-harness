@@ -32,6 +32,7 @@ import {
   type CreateChunk,
   type CreateMetaDecomposition,
   type DagEdge,
+  type ReviseChunk,
   type FeatureState,
   type SessionState,
 } from "../substrate/plan";
@@ -165,6 +166,52 @@ export class PlanDispatchService {
       chunkIds: input.chunks.map((c) => c.id),
       edgeCount: input.edges.length,
     };
+  }
+
+  /**
+   * Add one chunk to an existing session before approval (ADR 0020 §5b) — the chief grows a
+   * session's DAG on owner feedback. Optional edges wire the new chunk to the session's
+   * existing chunks. Validated as a DAG over the session's resulting graph (acyclic, known
+   * refs, no dup id) before the write. Planning-amendable (the repo gates on `planning`).
+   * `decompose` is the initial pass-2 fill of an empty session; this is the incremental add.
+   */
+  addChunk(input: { sessionId: string; chunk: Omit<CreateChunk, "sessionId">; edges?: DagEdge[] }): {
+    featureId: string;
+    sessionId: string;
+    chunkId: string;
+  } {
+    const session = this.plan.getSession(input.sessionId);
+    if (!session) throw new Error(`no session ${input.sessionId}`);
+    const edges = input.edges ?? [];
+
+    const projectedIds = [...this.plan.listChunks(input.sessionId).map((c) => c.id), input.chunk.id];
+    const projectedEdges = [...this.plan.listEdges(input.sessionId), ...edges];
+    const violation = validateDag(projectedIds, projectedEdges);
+    if (violation) throw new Error(`invalid chunk addition: ${violation}`);
+
+    this.plan.addChunkDag(input.sessionId, [{ ...input.chunk, sessionId: input.sessionId }], edges);
+    return { featureId: session.featureId, sessionId: input.sessionId, chunkId: input.chunk.id };
+  }
+
+  /**
+   * Revise + prune the plan before approval (ADR 0020 §5b) — the chief iterates with the
+   * owner while the feature is in `planning`. All delegate to the plan repo, which gates
+   * each on the parent feature being `planning` (a built/approved plan can't be edited).
+   */
+  reviseChunk(chunkId: string, spec: ReviseChunk): void {
+    this.plan.reviseChunk(chunkId, spec);
+  }
+
+  removeChunk(chunkId: string): void {
+    this.plan.removeChunk(chunkId);
+  }
+
+  removeSession(sessionId: string): void {
+    this.plan.removeSession(sessionId);
+  }
+
+  removeEdge(fromChunkId: string, toChunkId: string): void {
+    this.plan.removeEdge(fromChunkId, toChunkId);
   }
 
   /**
