@@ -19,18 +19,21 @@ export const FEATURE_TRANSITIONS: Record<FeatureState, readonly FeatureState[]> 
 
 /**
  * A chunk's lifecycle. Mirrors the dispatch registry's escalate-is-pausable model:
- * `escalated` is non-terminal — a parked chunk the chief re-dispatches (tier-promote)
- * or sends back to `planned` (re-decompose). Terminal: done, failed.
+ * `escalated` is non-terminal — the chief resolves a parked chunk by re-dispatching it on
+ * the strong tier (`escalated → dispatched`, tier-promote) or by splitting it into smaller
+ * chunks (`escalated → superseded`, re-decompose; the splits are new chunks). Terminal:
+ * done, failed, superseded.
  */
-export const CHUNK_STATES = ["planned", "dispatched", "done", "escalated", "failed"] as const;
+export const CHUNK_STATES = ["planned", "dispatched", "done", "escalated", "failed", "superseded"] as const;
 export type ChunkState = (typeof CHUNK_STATES)[number];
 
 export const CHUNK_TRANSITIONS: Record<ChunkState, readonly ChunkState[]> = {
   planned: ["dispatched"],
   dispatched: ["done", "escalated", "failed"],
-  escalated: ["dispatched", "planned"], // rewoken: tier-promote re-dispatch, or re-decompose
+  escalated: ["dispatched", "planned", "superseded"], // tier-promote, rewind, or re-decompose
   done: [],
   failed: [],
+  superseded: [], // re-decomposed: retired, its work moved to the replacement chunks
 };
 
 /** Which build tier a chunk is hinted for (ADR 0014). */

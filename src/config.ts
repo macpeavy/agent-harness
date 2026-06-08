@@ -18,6 +18,9 @@ export interface SubstrateConfig {
   worktreeRoot: string;
   /** OpenCode agent that runs builds (cheap route). Doubles as the cost-route key. */
   builderAgent: string;
+  /** OpenCode agent that runs strong-tier builds — the builder persona on the strong
+   *  route (ADR 0013/0014), for a tier-hinted or tier-promoted chunk. */
+  builderStrongAgent: string;
   /** OpenCode agent that runs reviews (strong route). Doubles as the cost-route key. */
   reviewerAgent: string;
   /** Max amend rounds before a dispatch escalates (ADR 0008). Default 3. */
@@ -58,6 +61,7 @@ export async function loadConfig(): Promise<SubstrateConfig> {
     ghRepo,
     worktreeRoot: process.env.AH_WORKTREE_ROOT ?? join(tmpdir(), "ah-worktrees"),
     builderAgent: process.env.AH_BUILDER_AGENT ?? "builder",
+    builderStrongAgent: process.env.AH_BUILDER_STRONG_AGENT ?? "builder-strong",
     reviewerAgent: process.env.AH_REVIEWER_AGENT ?? "reviewer",
     amendCap: intFromEnv(process.env.AH_AMEND_CAP, 3),
   };

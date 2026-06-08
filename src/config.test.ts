@@ -31,6 +31,7 @@ describe("loadConfig", () => {
     "AH_GH_REPO",
     "AH_WORKTREE_ROOT",
     "AH_BUILDER_AGENT",
+    "AH_BUILDER_STRONG_AGENT",
     "AH_REVIEWER_AGENT",
     "AH_AMEND_CAP",
   ] as const;
@@ -56,6 +57,7 @@ describe("loadConfig", () => {
     expect(config.ghRepo).toBe("acme/widgets");
     expect(config.worktreeRoot).toBe(join(tmpdir(), "ah-worktrees"));
     expect(config.builderAgent).toBe("builder");
+    expect(config.builderStrongAgent).toBe("builder-strong");
     expect(config.reviewerAgent).toBe("reviewer");
     expect(config.amendCap).toBe(3);
   });
@@ -65,6 +67,7 @@ describe("loadConfig", () => {
     process.env.AH_GH_REPO = "acme/widgets";
     process.env.AH_WORKTREE_ROOT = "/srv/worktrees";
     process.env.AH_BUILDER_AGENT = "builder-alt";
+    process.env.AH_BUILDER_STRONG_AGENT = "builder-strong-alt";
     process.env.AH_REVIEWER_AGENT = "principal";
     process.env.AH_AMEND_CAP = "5";
     const config = await loadConfig();
@@ -74,6 +77,7 @@ describe("loadConfig", () => {
       ghRepo: "acme/widgets",
       worktreeRoot: "/srv/worktrees",
       builderAgent: "builder-alt",
+      builderStrongAgent: "builder-strong-alt",
       reviewerAgent: "principal",
       amendCap: 5,
     });

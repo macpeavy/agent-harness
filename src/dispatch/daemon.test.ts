@@ -14,6 +14,7 @@ const CONFIG: SubstrateConfig = {
   ghRepo: "acme/widgets",
   worktreeRoot: "/tmp/ah-test-wt",
   builderAgent: "builder",
+  builderStrongAgent: "builder-strong",
   reviewerAgent: "reviewer",
   amendCap: 3,
 };
@@ -171,6 +172,21 @@ describe("curation passthrough (ADR 0018/0019)", () => {
 
     expect(rec.build[0]?.surface).toBeUndefined(); // null column → undefined, not null
     expect(rec.build[0]?.skills).toBeUndefined();
+  });
+
+  it("hands the row's build tier to the build leg (so a strong chunk routes strong)", async () => {
+    repo.create({
+      id: "d1",
+      issueId: "ISSUE-1",
+      title: "Gnarly",
+      branch: dispatchBranch(ISSUE),
+      spec: "Hard logic.",
+      tier: "strong",
+    });
+    const { legs, rec } = fakeLegs();
+    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    expect(rec.build[0]?.tier).toBe("strong"); // the build leg resolves this → builderStrongAgent
   });
 });
 

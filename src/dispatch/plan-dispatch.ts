@@ -26,7 +26,9 @@ import {
   type Chunk,
   type ChunkOutcome,
   type ChunkState,
+  type CreateChunk,
   type CreateDecomposition,
+  type DagEdge,
   type FeatureState,
 } from "../substrate/plan";
 
@@ -158,41 +160,79 @@ export class PlanDispatchService {
     }
 
     const ready = this.plan.readyChunks(featureId);
-    const materialised: MaterialisedDispatch[] = [];
-
-    for (const chunk of ready) {
-      // Invariant: dispatchId == issueId == chunkId. The build leg re-derives the branch
-      // from issue.id, and the registry stores that same branch for the review/resume to
-      // read — they must agree on one id. Re-dispatching a chunk (the escalation loop)
-      // means a second build of the same id, whose branch/PR-reuse strategy is unresolved;
-      // that's the next slice. Until then a collision is an explicit error, not a silent
-      // branch mismatch.
-      const dispatchId = chunk.id;
-      if (this.dispatch.get(dispatchId))
-        throw new Error(
-          `chunk ${chunk.id} already has dispatch ${dispatchId}; re-dispatch (escalation loop) is a later slice`,
-        );
-      const branch = dispatchBranch({ id: dispatchId, title: chunk.intent, body: "" });
-      this.dispatch.create({
-        id: dispatchId,
-        issueId: chunk.id,
-        title: chunk.intent,
-        branch,
-        spec: specFromChunk(chunk),
-        surface: chunk.surface,
-        // Skill curation rides the chunk's own field once it has one (ADR 0019 open
-        // question); until then the build leg infers from `surface`. No chunk.skills yet,
-        // so nothing to carry — left undefined, not invented.
-      });
-      this.plan.linkDispatch(chunk.id, dispatchId);
-      materialised.push({ chunkId: chunk.id, dispatchId });
-    }
+    const materialised = ready.map((chunk) => this.materialise(chunk));
 
     // First dispatch of an approved feature moves it into 'building'.
     if (materialised.length > 0 && state === "ready")
       this.plan.transitionFeature(featureId, "building");
 
     return materialised;
+  }
+
+  /**
+   * Tier-promote a parked escalated chunk and re-dispatch it on the strong build tier
+   * (ADR 0019): mark the chunk 'strong', then materialise a fresh dispatch (a new id, so
+   * the registry's stored branch and the build leg's derived branch still agree on one id —
+   * the re-dispatch branch fix). The chunk moves escalated → dispatched. Returns the new link.
+   */
+  promote(escalatedChunkId: string): MaterialisedDispatch {
+    const chunk = this.plan.getChunk(escalatedChunkId);
+    if (!chunk) throw new Error(`no chunk ${escalatedChunkId}`);
+    if (chunk.state !== "escalated")
+      throw new Error(`chunk ${escalatedChunkId} is not escalated (state: ${chunk.state})`);
+
+    this.plan.setTierHint(escalatedChunkId, "strong");
+    const promoted = this.plan.getChunk(escalatedChunkId);
+    if (!promoted) throw new Error(`no chunk ${escalatedChunkId}`);
+    return this.materialise(promoted);
+  }
+
+  /**
+   * Re-decompose a parked escalated chunk (ADR 0019): retire it (→ superseded) and replace
+   * it with smaller chunks the chief authors, validated as a DAG over the resulting feature
+   * graph (the new chunks plus the existing ones, minus the retired chunk's edges). The new
+   * chunks are 'planned' with fresh ids and flow through the normal dispatch path — no
+   * re-dispatch branch concern (they are new units of work). The chief supplies any edges
+   * that reconnect the retired chunk's former dependents to the replacements.
+   */
+  redecompose(
+    escalatedChunkId: string,
+    input: { chunks: Omit<CreateChunk, "featureId">[]; edges: DagEdge[] },
+  ): Decomposed {
+    const chunk = this.plan.getChunk(escalatedChunkId);
+    if (!chunk) throw new Error(`no chunk ${escalatedChunkId}`);
+    if (chunk.state !== "escalated")
+      throw new Error(`chunk ${escalatedChunkId} is not escalated (state: ${chunk.state})`);
+
+    // No new edge may reference the retired chunk — it is leaving the active graph.
+    for (const e of input.edges)
+      if (e.from === escalatedChunkId || e.to === escalatedChunkId)
+        throw new Error(`re-decompose: an edge references the retired chunk ${escalatedChunkId}`);
+
+    // Project the feature graph after the rewrite and validate it whole: the surviving
+    // chunks (every chunk except the one being retired) plus the new chunks, and the
+    // surviving edges (those not touching the retired chunk) plus the new edges.
+    const survivingIds = this.plan
+      .listChunks(chunk.featureId)
+      .filter((c) => c.id !== escalatedChunkId)
+      .map((c) => c.id);
+    const survivingEdges = this.plan
+      .listEdges(chunk.featureId)
+      .filter((e) => e.from !== escalatedChunkId && e.to !== escalatedChunkId);
+
+    const projectedIds = [...survivingIds, ...input.chunks.map((c) => c.id)];
+    const projectedEdges = [...survivingEdges, ...input.edges];
+    const violation = validateDag(projectedIds, projectedEdges);
+    if (violation) throw new Error(`invalid re-decomposition: ${violation}`);
+
+    // Stamp the replacements with the escalated chunk's feature so the chief doesn't repeat it.
+    const stamped = input.chunks.map((c) => ({ ...c, featureId: chunk.featureId }));
+    this.plan.redecompose(escalatedChunkId, stamped, input.edges);
+    return {
+      featureId: chunk.featureId,
+      chunkIds: input.chunks.map((c) => c.id),
+      edgeCount: input.edges.length,
+    };
   }
 
   /**
@@ -215,9 +255,13 @@ export class PlanDispatchService {
       flowed.push({ chunkId: chunk.id, outcome });
     }
 
+    // The feature is done when every chunk has reached a terminal-success state — `done`,
+    // or `superseded` (re-decomposed: retired, its work carried by the replacement chunks,
+    // which must themselves be done). A `failed` or still-in-flight chunk holds it open.
     const all = this.plan.listChunks(featureId);
     const feature = this.plan.getFeature(featureId);
-    if (feature?.state === "building" && all.length > 0 && all.every((c) => c.state === "done"))
+    const allComplete = all.every((c) => c.state === "done" || c.state === "superseded");
+    if (feature?.state === "building" && all.length > 0 && allComplete)
       this.plan.transitionFeature(featureId, "done");
 
     return flowed;
@@ -265,5 +309,46 @@ export class PlanDispatchService {
       readout: cheapAbleFraction([...dispatchById.values()]),
       escalations,
     };
+  }
+
+  // --- internals ---
+
+  /**
+   * Materialise one chunk as a dispatch: a registry row (spec from the chunk, surface +
+   * tier carried so the right context pack and build route apply), then link it onto the
+   * chunk. Shared by the first dispatch and tier-promote re-dispatch.
+   *
+   * Invariant: dispatchId == issueId. The build leg derives the branch + worktree from the
+   * issue id, and the registry stores that same branch for review/resume — they must agree
+   * on one id. A re-dispatch gets a fresh id (chunkId-r2, …) so it doesn't collide with the
+   * prior attempt's branch; first dispatch is just the chunk id.
+   */
+  private materialise(chunk: Chunk): MaterialisedDispatch {
+    const dispatchId = this.nextDispatchId(chunk.id);
+    const branch = dispatchBranch({ id: dispatchId, title: chunk.intent, body: "" });
+    this.dispatch.create({
+      id: dispatchId,
+      issueId: dispatchId,
+      title: chunk.intent,
+      branch,
+      spec: specFromChunk(chunk),
+      surface: chunk.surface,
+      tier: chunk.tierHint,
+      // No chunk.skills field yet (ADR 0019 open question) — the build leg infers skills
+      // from `surface` until the chief curates them per chunk.
+    });
+    this.plan.linkDispatch(chunk.id, dispatchId);
+    return { chunkId: chunk.id, dispatchId };
+  }
+
+  // A dispatch id free in the registry: the chunk id, suffixed on collision (a re-dispatched
+  // chunk — tier-promote — needs a fresh row; the prior attempt's is parked/terminal).
+  // Bounded probe; ids stay readable (a, a-r2, a-r3, …).
+  private nextDispatchId(chunkId: string): string {
+    if (!this.dispatch.get(chunkId)) return chunkId;
+    for (let n = 2; ; n++) {
+      const candidate = `${chunkId}-r${n}`;
+      if (!this.dispatch.get(candidate)) return candidate;
+    }
   }
 }

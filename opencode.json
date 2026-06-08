@@ -28,6 +28,10 @@
         "builder-gemini": {
           "name": "builder-gemini — gemini-2.5-flash-lite (validated Western alternate, AGENT-17)",
           "limit": { "context": 1000000, "output": 64000 }
+        },
+        "builder-strong": {
+          "name": "builder-strong — claude-sonnet-4.6 (the builder on the strong route; tier-hint/promote)",
+          "limit": { "context": 1000000, "output": 64000 }
         }
       }
     }
@@ -152,6 +156,13 @@
       "description": "Validated Western alternate (AGENT-17): builder persona on gemini-2.5-flash-lite.",
       "mode": "all",
       "model": "litellm/builder-gemini",
+      "prompt": "{file:./agents/builder.md}",
+      "permission": { "edit": "allow", "task": "deny", "substrate_*": "deny" }
+    },
+    "builder-strong": {
+      "description": "The builder persona on the strong route (ADR 0013/0014) — for a tier-hinted or tier-promoted chunk. Same builder.md, stronger model.",
+      "mode": "all",
+      "model": "litellm/builder-strong",
       "prompt": "{file:./agents/builder.md}",
       "permission": { "edit": "allow", "task": "deny", "substrate_*": "deny" }
     },

@@ -25,6 +25,7 @@ describe("cheapAbleFraction readout", () => {
     const base = {
       surface: null,
       skills: null,
+      tier: null,
       route: null,
       buildSessionId: null,
       reviewSessionId: null,
@@ -159,6 +160,7 @@ describe("cheapAbleFraction readout", () => {
     const base = {
       surface: null,
       skills: null,
+      tier: null,
       route: null,
       buildSessionId: null,
       reviewSessionId: null,
@@ -211,6 +213,7 @@ describe("cheapAbleFraction readout", () => {
     const base = {
       surface: null,
       skills: null,
+      tier: null,
       route: null,
       buildSessionId: null,
       reviewSessionId: null,
@@ -273,6 +276,7 @@ describe("cheapAbleFraction readout", () => {
     const base = {
       surface: null,
       skills: null,
+      tier: null,
       route: null,
       buildSessionId: null,
       reviewSessionId: null,

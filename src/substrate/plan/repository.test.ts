@@ -193,3 +193,59 @@ describe("createDecomposition (transactional batch)", () => {
     expect(plan.listChunks("F1")).toEqual([]);
   });
 });
+
+describe("setTierHint", () => {
+  it("updates a chunk's tier hint", () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    expect(plan.getChunk("a")?.tierHint).toBe("cheap"); // default
+    plan.setTierHint("a", "strong");
+    expect(plan.getChunk("a")?.tierHint).toBe("strong");
+  });
+
+  it("throws for a missing chunk", () => {
+    expect(() => plan.setTierHint("ghost", "strong")).toThrow("no chunk ghost");
+  });
+});
+
+describe("listEdges", () => {
+  it("returns a feature's edges as from→to pairs", () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    plan.addChunk(chunk("b"));
+    plan.addEdge("F1", "a", "b");
+    expect(plan.listEdges("F1")).toEqual([{ from: "a", to: "b" }]);
+  });
+});
+
+describe("redecompose", () => {
+  it("retires the escalated chunk (→ superseded), drops its edges, and adds the replacements", () => {
+    // a → b; a escalates and is split into a1, a2 (a2 reconnects to b).
+    plan.createDecomposition({ feature: FEATURE, chunks: [chunk("a"), chunk("b")], edges: [{ from: "a", to: "b" }] });
+    plan.transitionFeature("F1", "ready");
+    plan.transition("a", "dispatched");
+    plan.transition("a", "escalated");
+
+    plan.redecompose(
+      "a",
+      [chunk("a1"), chunk("a2")],
+      [{ from: "a1", to: "a2" }, { from: "a2", to: "b" }],
+    );
+
+    expect(plan.getChunk("a")?.state).toBe("superseded");
+    expect(plan.listChunks("F1").map((c) => c.id)).toEqual(["a", "b", "a1", "a2"]);
+    // The retired chunk's edge a→b is gone; the rewired graph is a1→a2→b.
+    expect(plan.listEdges("F1").sort((x, y) => x.from.localeCompare(y.from))).toEqual([
+      { from: "a1", to: "a2" },
+      { from: "a2", to: "b" },
+    ]);
+    // b now depends on a2 (not the retired a); a1 is the only root ready.
+    expect(plan.readyChunks("F1").map((c) => c.id)).toEqual(["a1"]);
+  });
+
+  it("rejects re-decomposing a chunk that isn't escalated", () => {
+    plan.createFeature(FEATURE);
+    plan.addChunk(chunk("a"));
+    expect(() => plan.redecompose("a", [chunk("a1")], [])).toThrow("illegal chunk transition planned → superseded");
+  });
+});

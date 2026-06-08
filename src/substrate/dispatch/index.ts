@@ -12,8 +12,9 @@ export {
   DISPATCH_STATES,
   ESCALATIONS,
   COST_LEGS,
+  BUILD_TIERS,
 } from "./model";
-export type { Dispatch, NewDispatch, DispatchState, Escalation, CostLeg } from "./model";
+export type { Dispatch, NewDispatch, DispatchState, Escalation, CostLeg, BuildTier } from "./model";
 
 // The read surface: the cheap-able-fraction readout (ADR 0009) and the status table.
 export { cheapAbleFraction } from "./readout";

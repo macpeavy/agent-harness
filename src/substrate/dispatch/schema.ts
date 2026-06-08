@@ -8,7 +8,7 @@
 
 import type { InferInsertModel, InferSelectModel } from "drizzle-orm";
 import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { DISPATCH_STATES, ESCALATIONS } from "./model";
+import { BUILD_TIERS, DISPATCH_STATES, ESCALATIONS } from "./model";
 
 export const dispatches = sqliteTable("dispatches", {
   id: text("id").primaryKey(),
@@ -29,6 +29,10 @@ export const dispatches = sqliteTable("dispatches", {
   // Persisted (not just in-memory) so a resumed build (resumeIncomplete) keeps curation.
   surface: text("surface"),
   skills: text("skills", { mode: "json" }).$type<string[]>(),
+  // The build tier (ADR 0013/0014), carried from the chunk's tierHint so the daemon
+  // builds on the cheap or strong builder agent — and survives a resumed build. Null is
+  // treated as cheap (the default route); a tier-promoted re-dispatch carries 'strong'.
+  tier: text("tier", { enum: BUILD_TIERS }),
   state: text("state", { enum: DISPATCH_STATES }).notNull().default("queued"),
   // Linked OpenCode session ids — the registry links them, it does not own the
   // sessions or duplicate their data (ADR 0009, above-OpenCode layering).

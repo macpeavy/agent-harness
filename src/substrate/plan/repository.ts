@@ -10,7 +10,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, or, sql } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import {
@@ -164,6 +164,16 @@ export class PlanRepository {
     return this.db.select().from(chunks).where(eq(chunks.featureId, featureId)).orderBy(asc(chunks.createdAt)).all();
   }
 
+  /** A feature's dependency edges as from→to pairs — what the service needs to validate a
+   *  re-decomposition's projected graph (it never reaches into the edges table itself). */
+  listEdges(featureId: string): { from: string; to: string }[] {
+    return this.db
+      .select({ from: edges.fromChunkId, to: edges.toChunkId })
+      .from(edges)
+      .where(eq(edges.featureId, featureId))
+      .all();
+  }
+
   /**
    * Chunks ready to dispatch: state 'planned' (not yet dispatched) whose every
    * dependency (incoming edge's `from`) has reached 'done'. Roots (no deps) are ready.
@@ -181,6 +191,48 @@ export class PlanRepository {
   /** Move a chunk to a new state, validated against the chunk graph (transactional). */
   transition(id: string, to: ChunkState): void {
     this.moveChunk(id, to, {});
+  }
+
+  /** Set a chunk's build tier hint (the chief tier-promotes an escalated chunk to 'strong'
+   *  before re-dispatching it, ADR 0019). Throws if the chunk is absent. */
+  setTierHint(id: string, tier: TierHint): void {
+    const row = this.db.select({ id: chunks.id }).from(chunks).where(eq(chunks.id, id)).get();
+    if (!row) throw new Error(`no chunk ${id}`);
+    this.db.update(chunks).set({ tierHint: tier, updatedAt: Date.now() }).where(eq(chunks.id, id)).run();
+  }
+
+  /**
+   * Re-decompose an escalated chunk (ADR 0019): retire it (escalated → superseded), drop
+   * every edge touching it (its dependents are reconnected by the new edges the chief
+   * supplies), and add the replacement chunks + edges — all in one transaction, so the
+   * plan never half-rewires. Assumes a pre-validated graph (the service runs `validateDag`
+   * over the projected feature graph); FK/unique constraints are the backstop.
+   */
+  redecompose(escalatedChunkId: string, newChunks: CreateChunk[], newEdges: { from: string; to: string }[]): void {
+    this.db.transaction((tx) => {
+      const row = tx
+        .select({ state: chunks.state, featureId: chunks.featureId })
+        .from(chunks)
+        .where(eq(chunks.id, escalatedChunkId))
+        .get();
+      if (!row) throw new Error(`no chunk ${escalatedChunkId}`);
+      if (!CHUNK_TRANSITIONS[row.state].includes("superseded"))
+        throw new Error(`illegal chunk transition ${row.state} → superseded for ${escalatedChunkId}`);
+
+      tx.delete(edges)
+        .where(
+          and(
+            eq(edges.featureId, row.featureId),
+            or(eq(edges.fromChunkId, escalatedChunkId), eq(edges.toChunkId, escalatedChunkId)),
+          ),
+        )
+        .run();
+      tx.update(chunks).set({ state: "superseded", updatedAt: Date.now() }).where(eq(chunks.id, escalatedChunkId)).run();
+
+      const now = Date.now();
+      for (const c of newChunks) tx.insert(chunks).values(chunkValues(c, now)).run();
+      for (const e of newEdges) tx.insert(edges).values(edgeValues(row.featureId, e.from, e.to, now)).run();
+    });
   }
 
   /**

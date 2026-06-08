@@ -22,6 +22,8 @@ export interface Issue {
   surface?: string;
   /** Explicit context-pack skills (the chief's per-chunk curation), if any. */
   skills?: string[];
+  /** Build tier (ADR 0013/0014): 'strong' routes to the strong builder agent; cheap by default. */
+  tier?: "cheap" | "strong";
 }
 
 /**
@@ -80,6 +82,11 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
   // Install deps so the builder can typecheck/test its own work in-worktree.
   await $`bun install`.cwd(worktree).quiet();
 
+  // The build tier picks the agent (ADR 0013/0014): a 'strong'-tier chunk runs the builder
+  // persona on the strong route; cheap is the default. The chosen agent is also the route
+  // recorded in the cost instrument, so a strong build is attributed correctly.
+  const agent = issue.tier === "strong" ? config.builderStrongAgent : config.builderAgent;
+
   try {
     // 2. Run the builder in the worktree (synchronous drive). The load-bearing context
     //    pack — standards + the chunk's skill(s) — is PUSHED into the prompt (ADR 0018),
@@ -88,7 +95,7 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
     const prompt = buildPrompt(issue, pack);
     const run = await runAgent(worktree, {
       title: `build ${issue.id}`,
-      agent: config.builderAgent,
+      agent,
       prompt,
       mode: "sync",
     });
@@ -101,7 +108,7 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
         worktree,
         changed: false,
         reply: run.reply,
-        route: config.builderAgent,
+        route: agent,
         buildSessionId: run.sessionId,
         tokens: run.tokens,
       };
@@ -113,7 +120,7 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
     await $`git -C ${worktree} commit -q -m ${commitMsg}`;
     await $`git -C ${worktree} push -u origin ${branch}`.quiet();
     const prBody =
-      `Built by the cheap builder route and dispatched by the substrate.\n\n` +
+      `Built by the \`${agent}\` builder route and dispatched by the substrate.\n\n` +
       `**Issue ${issue.id}:** ${issue.title}\n\n${issue.body}`;
     const prUrl = (
       await $`gh pr create --repo ${config.ghRepo} --head ${branch} --base main --title ${commitMsg} --body ${prBody}`.text()
@@ -125,7 +132,7 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
       changed: true,
       reply: run.reply,
       prUrl,
-      route: config.builderAgent,
+      route: agent,
       buildSessionId: run.sessionId,
       tokens: run.tokens,
     };
