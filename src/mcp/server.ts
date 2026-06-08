@@ -11,6 +11,8 @@ import { z } from "zod";
 import { PlanRepository } from "../substrate/plan";
 import { DispatchRepository } from "../substrate/dispatch";
 import { PlanDispatchService } from "../dispatch/plan-dispatch";
+import { loadConfig } from "../config";
+import { runReadPrReviewLeg } from "../dispatch/legs/pr-review";
 import {
   runStatus,
   runDispatch,
@@ -25,6 +27,9 @@ import {
   runRemoveChunk,
   runRemoveSession,
   runRemoveEdge,
+  runAddressReview,
+  runCloseSession,
+  type PrReviewReader,
 } from "./tools";
 
 // The chunk spec the chief authors per chunk (ADR 0014). The parent sessionId is omitted —
@@ -41,11 +46,18 @@ const chunkSpec = z.object({
   tierHint: z.enum(["cheap", "strong"]).optional().describe("build tier (default cheap)"),
 });
 
+/** Construction options — `readPrReview` reads a session PR's review off GitHub for
+ *  `address_review` (the real impl is the PR-review leg bound to config; a test passes a fake;
+ *  absent → the tool returns a configuration error). */
+export interface SubstrateServerOptions {
+  readPrReview?: PrReviewReader;
+}
+
 /**
  * Build the substrate MCP server over a given service — pure construction, so a test can
  * link it to an in-memory client without spawning a process.
  */
-export function createSubstrateServer(service: PlanDispatchService): McpServer {
+export function createSubstrateServer(service: PlanDispatchService, opts: SubstrateServerOptions = {}): McpServer {
   const server = new McpServer({ name: "substrate", version: "0.1.0" });
 
   server.registerTool(
@@ -245,6 +257,34 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
   );
 
   server.registerTool(
+    "address_review",
+    {
+      title: "Address the owner's review of a session PR",
+      description:
+        "Pull the owner's review off the session PR and route it into the amend cycle (ADR 0020 " +
+        "§5). Inline comments are matched to a chunk by file and reopen it to amend — the daemon " +
+        "amends the fix back into session-main and the PR updates; you don't relay routine notes. " +
+        "General/unroutable notes come back for YOUR judgment (re-decompose, design change). Call " +
+        "it on the owner's go to address their review of a session in `review`.",
+      inputSchema: { sessionId: z.string().describe("the session whose PR review to address (must be in review)") },
+    },
+    async ({ sessionId }) => runAddressReview(service, opts.readPrReview, sessionId),
+  );
+
+  server.registerTool(
+    "close_session",
+    {
+      title: "Close a session on the owner's merge",
+      description:
+        "Record that the owner merged the session PR (ADR 0020 §6): the session moves " +
+        "`review → done`, and the feature completes when its last session merges. The merge " +
+        "itself is the owner's, on GitHub (the gate) — call this only after they've merged.",
+      inputSchema: { sessionId: z.string().describe("the session whose PR the owner merged") },
+    },
+    async ({ sessionId }) => runCloseSession(service, sessionId),
+  );
+
+  server.registerTool(
     "promote",
     {
       title: "Tier-promote an escalated chunk",
@@ -287,6 +327,9 @@ if (import.meta.main) {
   const plan = dbPath ? new PlanRepository(dbPath) : new PlanRepository();
   const dispatch = dbPath ? new DispatchRepository(dbPath) : new DispatchRepository();
   const service = new PlanDispatchService(plan, dispatch);
-  const server = createSubstrateServer(service);
+  // The real PR-review reader, resolved lazily so booting (and the stdio smoke test) doesn't
+  // require full gateway/gh config — only an actual address_review call loads it.
+  const readPrReview: PrReviewReader = async (prNumber) => runReadPrReviewLeg(prNumber, await loadConfig());
+  const server = createSubstrateServer(service, { readPrReview });
   await server.connect(new StdioServerTransport());
 }

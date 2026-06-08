@@ -28,18 +28,21 @@ afterEach(() => {
 
 describe("the transition graph", () => {
   it("derives the terminal set from the graph, not a hardcoded list", () => {
-    expect(isTerminal("done")).toBe(true);
     expect(isTerminal("failed")).toBe(true);
     expect(isTerminal("queued")).toBe(false);
     expect(isTerminal("amending")).toBe(false);
     // escalated is a paused state, not terminal — it can rewake to building.
     expect(isTerminal("escalated")).toBe(false);
+    // done is a RESTING state, reopenable by owner review (ADR 0020 slice 4b: done → amending),
+    // so it too is non-terminal — only `failed` is truly terminal now.
+    expect(isTerminal("done")).toBe(false);
   });
 
-  it("derives non-terminal states from the graph (escalated is paused, not terminal)", () => {
+  it("derives non-terminal states from the graph (escalated + done are paused, not terminal)", () => {
     expect(nonTerminalStates().sort()).toEqual([
       "amending",
       "building",
+      "done",
       "escalated",
       "queued",
       "review",
@@ -214,7 +217,7 @@ describe("the instrument columns", () => {
 });
 
 describe("resumeIncomplete", () => {
-  it("returns non-terminal dispatches (incl. parked-escalated), newest first", () => {
+  it("returns non-terminal dispatches (incl. parked-escalated + reopenable-done), newest first", () => {
     repo.create({ ...SEED, id: "queued1" });
     repo.create({ ...SEED, id: "building1" });
     repo.transition("building1", "building");
@@ -229,9 +232,42 @@ describe("resumeIncomplete", () => {
     repo.transition("failed1", "building");
     repo.transition("failed1", "failed");
 
-    // queued/building/escalated are incomplete; done/failed are not. An escalated
-    // dispatch is parked work the daemon resumes (rewakes), so it must surface here.
+    // queued/building/escalated are incomplete; only failed is terminal now. Both escalated
+    // (parked, rewoken) and done (resting, reopenable by owner review — ADR 0020 slice 4b)
+    // are non-terminal, so both surface here; the daemon skips them until an external signal.
     const incomplete = repo.resumeIncomplete().map((d) => d.id);
-    expect(incomplete).toEqual(["escalated1", "building1", "queued1"]);
+    expect(incomplete).toEqual(["done1", "escalated1", "building1", "queued1"]);
+  });
+});
+
+describe("reopenForReview (owner-review reopen, ADR 0020 slice 4b)", () => {
+  // Drive a dispatch to its resting `done` state.
+  function seedDone(id: string): void {
+    repo.create({ ...SEED, id });
+    repo.transition(id, "building");
+    repo.transition(id, "review");
+    repo.transition(id, "done");
+  }
+
+  it("moves a done dispatch to amending and stashes the owner's findings, atomically", () => {
+    seedDone("d1");
+    repo.reopenForReview("d1", "owner: tighten the error message");
+
+    const d = repo.get("d1");
+    expect(d?.state).toBe("amending");
+    expect(d?.pendingFindings).toBe("owner: tighten the error message");
+  });
+
+  it("clears the pending findings once amended", () => {
+    seedDone("d1");
+    repo.reopenForReview("d1", "owner note");
+    repo.clearPendingFindings("d1");
+    expect(repo.get("d1")?.pendingFindings).toBeNull();
+  });
+
+  it("rejects reopening a dispatch that isn't done (only done has the → amending edge)", () => {
+    repo.create({ ...SEED, id: "d1" });
+    repo.transition("d1", "building");
+    expect(() => repo.reopenForReview("d1", "x")).toThrow("illegal transition building → amending");
   });
 });

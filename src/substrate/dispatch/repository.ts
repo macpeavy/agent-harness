@@ -198,6 +198,23 @@ export class DispatchRepository {
     this.patch(id, { amendRounds: sql`${dispatches.amendRounds} + 1` });
   }
 
+  /**
+   * Reopen a done dispatch for an owner-review amend (ADR 0020 slice 4b): move it
+   * `done → amending` and stash the owner's findings, in one atomic step. The findings cross
+   * the process boundary on the row (the chief's MCP server writes them; the daemon reads
+   * them). `move` enforces the graph — only a `done` dispatch has the `→ amending` edge, so
+   * this throws on any other state. The daemon then amends against `pendingFindings` and
+   * clears them (clearPendingFindings) before re-reviewing.
+   */
+  reopenForReview(id: string, findings: string): void {
+    this.move(id, "amending", { pendingFindings: findings });
+  }
+
+  /** Clear the pending owner-review findings once the daemon has amended against them. */
+  clearPendingFindings(id: string): void {
+    this.patch(id, { pendingFindings: null });
+  }
+
   /** Stamp a dispatch as reaped (the terminal reaper cleaned its abandoned resources). */
   markReaped(id: string): void {
     this.patch(id, { reapedAt: Date.now() });

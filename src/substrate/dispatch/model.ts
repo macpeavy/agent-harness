@@ -43,7 +43,13 @@ export const TRANSITIONS: Record<DispatchState, readonly DispatchState[]> = {
   building: ["review", "escalated", "failed"],
   review: ["amending", "done", "escalated", "failed"],
   amending: ["review", "escalated", "failed"],
-  done: [],
+  // `done` is a RESTING state, reopenable only by owner review (ADR 0020 slice 4b): the
+  // owner's PR comments reopen a merged chunk's dispatch (`done → amending`) to amend the
+  // fix back into session-main. It's the same shape as `escalated` — non-terminal but
+  // PARKED: resumeIncomplete() surfaces it, and the daemon SKIPS it (never auto-drives a
+  // done dispatch) until the external reopen signal moves it to `amending`. The only
+  // mover is reopenForReview; the normal build→review→merge path leaves it at rest here.
+  done: ["amending"],
   // `escalated` is a PAUSED state, not terminal: a cap-exceeded dispatch parks here
   // and is rewoken on resolution — re-decompose / tier-promote / attended all re-enter
   // at `building` — or is abandoned to `failed` (ADR 0008). Because it's non-terminal,

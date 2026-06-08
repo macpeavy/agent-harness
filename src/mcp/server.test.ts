@@ -19,6 +19,10 @@ let plan: PlanRepository;
 let dispatch: DispatchRepository;
 let service: PlanDispatchService;
 let client: Client;
+// A fake PR-review reader the address_review tests control: it records the PR it was asked
+// for and returns the canned comments — so the tool is exercised without touching GitHub.
+let prReadFor: number[];
+let prComments: { path: string | null; body: string; author?: string }[];
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "ah-mcp-"));
@@ -27,7 +31,14 @@ beforeEach(async () => {
   dispatch = new DispatchRepository(dbPath);
   service = new PlanDispatchService(plan, dispatch);
 
-  const server = createSubstrateServer(service);
+  prReadFor = [];
+  prComments = [];
+  const server = createSubstrateServer(service, {
+    async readPrReview(prNumber) {
+      prReadFor.push(prNumber);
+      return prComments;
+    },
+  });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   client = new Client({ name: "test", version: "0.0.0" });
@@ -89,6 +100,8 @@ describe("tool discovery", () => {
       "add_chunk",
       "add_edge",
       "add_session",
+      "address_review",
+      "close_session",
       "decompose",
       "dispatch",
       "meta_decompose",
@@ -182,6 +195,61 @@ describe("dispatch", () => {
 
   it("returns a tool error for an unknown session", async () => {
     expect(await isError("dispatch", { sessionId: "ghost" })).toBe(true);
+  });
+});
+
+describe("address_review + close_session (owner-review loop, ADR 0020 slice 4b)", () => {
+  // Drive S1 to `review` with chunk a built + merged and a PR linked.
+  function sessionInReview(): void {
+    seedFeatureSession();
+    plan.linkSessionPr("S1", { branch: "session-main-S1", prNumber: 7, prUrl: "http://pr/7" });
+    plan.addChunk(chunk("a"));
+    service.dispatchReady("S1");
+    dispatch.transition("a", "building");
+    dispatch.transition("a", "review");
+    dispatch.transition("a", "done");
+    service.recordOutcomes("S1");
+  }
+
+  it("reads the PR and reopens the touched chunk to amend", async () => {
+    sessionInReview();
+    prComments = [{ path: "src/a.ts", body: "rename foo to bar", author: "owner" }];
+
+    const body = await callText("address_review", { sessionId: "S1" });
+    expect(prReadFor).toEqual([7]); // read the session's PR
+    expect(body).toContain("Reopened 1 chunk(s) to amend");
+    expect(body).toContain("a");
+    expect(dispatch.get("a")?.state).toBe("amending");
+    expect(dispatch.get("a")?.pendingFindings).toContain("rename foo to bar");
+  });
+
+  it("surfaces a general note for the chief's judgment without reopening", async () => {
+    sessionInReview();
+    prComments = [{ path: null, body: "rethink the API shape" }];
+
+    const body = await callText("address_review", { sessionId: "S1" });
+    expect(body).toContain("need your judgment");
+    expect(body).toContain("rethink the API shape");
+    expect(dispatch.get("a")?.state).toBe("done"); // untouched
+  });
+
+  it("errors addressing a session that isn't in review", async () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    expect(await isError("address_review", { sessionId: "S1" })).toBe(true);
+  });
+
+  it("close_session records the owner's merge (review → done)", async () => {
+    sessionInReview();
+    const body = await callText("close_session", { sessionId: "S1" });
+    expect(body).toContain("Closed session S1");
+    expect(plan.getSession("S1")?.state).toBe("done");
+    expect(plan.getFeature("F1")?.state).toBe("done"); // its only session merged
+  });
+
+  it("close_session errors on a session that isn't in review", async () => {
+    seedFeatureSession();
+    expect(await isError("close_session", { sessionId: "S1" })).toBe(true);
   });
 });
 
@@ -314,6 +382,8 @@ describe("stdio smoke-boot", () => {
         "add_chunk",
         "add_edge",
         "add_session",
+        "address_review",
+        "close_session",
         "decompose",
         "dispatch",
         "meta_decompose",

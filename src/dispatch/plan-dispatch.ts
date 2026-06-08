@@ -73,6 +73,24 @@ export interface ParkedEscalation {
   kind: Escalation;
 }
 
+/** One piece of owner feedback on a session PR, as handed to `addressReview` (ADR 0020 slice
+ *  4b). `path` set = inline (routable to a chunk by surface); null = a general note. Structurally
+ *  the PR-review leg's `PrComment` — the service stays I/O-free, the leg does the gh read. */
+export interface OwnerReviewComment {
+  path: string | null;
+  body: string;
+  author?: string;
+}
+
+/** The result of routing an owner review into the amend cycle (ADR 0020 slice 4b): the chunks
+ *  reopened to amend, and the comments that couldn't be routed (general notes, or ones whose
+ *  chunk isn't reopenable) — those surface to the chief for judgment. */
+export interface AddressReviewResult {
+  sessionId: string;
+  reopened: { chunkId: string; dispatchId: string }[];
+  unrouted: { path: string | null; body: string; reason: string }[];
+}
+
 /** One session's progress: its state + PR linkage, its chunks, the readout over its
  *  dispatches, and the parked escalations within it. */
 export interface SessionStatus {
@@ -123,6 +141,19 @@ export function specFromChunk(c: Chunk): string {
  */
 export function outcomeFor(state: DispatchState): ChunkOutcome | null {
   return (CHUNK_OUTCOMES as readonly string[]).includes(state) ? (state as ChunkOutcome) : null;
+}
+
+/**
+ * Render an owner's PR-review notes on one chunk's file into the findings prompt the amend leg
+ * feeds the builder (ADR 0020 slice 4b) — the same channel as the strong reviewer's findings,
+ * framed so the builder knows it's the owner's review and addresses every note.
+ */
+export function ownerFindings(surface: string, comments: OwnerReviewComment[]): string {
+  const notes = comments.map((c, i) => `${i + 1}. ${c.body}`).join("\n");
+  return (
+    `The owner reviewed the session PR and left these notes on ${surface}. Address every one, ` +
+    `then typecheck/test:\n\n${notes}`
+  );
 }
 
 export class PlanDispatchService {
@@ -421,6 +452,82 @@ export class PlanDispatchService {
     this.plan.transitionSession(sessionId, "done");
     this.completeFeatureIfDone(session.featureId);
     return { featureId: session.featureId };
+  }
+
+  /**
+   * The PR number of a session whose work is up for owner review (ADR 0020 slice 4b) — what
+   * the chief's `address_review` tool reads the PR comments from before routing them. Throws
+   * if the session isn't in `review` (nothing to review yet) or has no PR linked.
+   */
+  sessionPrNumber(sessionId: string): number {
+    const session = this.plan.getSession(sessionId);
+    if (!session) throw new Error(`no session ${sessionId}`);
+    if (session.state !== "review")
+      throw new Error(`session ${sessionId} is ${session.state}, not review — no PR to address yet`);
+    if (session.prNumber == null) throw new Error(`session ${sessionId} has no PR linked`);
+    return session.prNumber;
+  }
+
+  /**
+   * Route an owner's PR review into the amend cycle (ADR 0020 §5, slice 4b). Inline comments
+   * are matched to a chunk by file `path` → its `surface`; each matched chunk's (done) dispatch
+   * is reopened with the owner's notes as `pendingFindings`, so the daemon amends the fix back
+   * into session-main and the PR updates. Comments that can't be routed — general review
+   * summaries, a path matching no chunk, or a chunk whose dispatch isn't reopenable — are
+   * returned for the chief to weigh (the judgment-level path, ADR 0020 §5; the owner doesn't
+   * hand-relay routine notes — the substrate read them all). The session stays in `review`.
+   *
+   * Cross-context: the service is the layer allowed to join the plan (chunk surfaces) and the
+   * registry (reopening dispatches). Comments are read by the PR-review leg and passed in, so
+   * this stays I/O-free and unit-testable.
+   */
+  addressReview(sessionId: string, comments: OwnerReviewComment[]): AddressReviewResult {
+    const session = this.plan.getSession(sessionId);
+    if (!session) throw new Error(`no session ${sessionId}`);
+    if (session.state !== "review")
+      throw new Error(`session ${sessionId} is ${session.state}, not review — nothing to address`);
+
+    const chunks = this.plan.listChunks(sessionId);
+    const bySurface = new Map<string, Chunk>(chunks.map((c) => [c.surface, c]));
+
+    // Group routable comments by the chunk they touch; collect the rest with a reason.
+    const notesByChunk = new Map<string, OwnerReviewComment[]>();
+    const unrouted: AddressReviewResult["unrouted"] = [];
+    for (const comment of comments) {
+      const chunk = comment.path ? bySurface.get(comment.path) : undefined;
+      if (!chunk) {
+        unrouted.push({
+          path: comment.path,
+          body: comment.body,
+          reason: comment.path ? `no chunk owns ${comment.path}` : "general review note (no file)",
+        });
+        continue;
+      }
+      const group = notesByChunk.get(chunk.id) ?? [];
+      group.push(comment);
+      notesByChunk.set(chunk.id, group);
+    }
+
+    // Reopen each touched chunk's dispatch — but only a `done` one is reopenable. A chunk
+    // still in flight (or with no dispatch) can't take an amend yet; surface it instead.
+    const reopened: AddressReviewResult["reopened"] = [];
+    for (const [chunkId, notes] of notesByChunk) {
+      const chunk = this.plan.getChunk(chunkId);
+      const dispatch = chunk?.dispatchId ? this.dispatch.get(chunk.dispatchId) : null;
+      if (!chunk?.dispatchId || !dispatch) {
+        for (const n of notes) unrouted.push({ path: n.path, body: n.body, reason: `chunk ${chunkId} has no dispatch` });
+        continue;
+      }
+      if (dispatch.state !== "done") {
+        for (const n of notes)
+          unrouted.push({ path: n.path, body: n.body, reason: `chunk ${chunkId} dispatch is ${dispatch.state}, not done` });
+        continue;
+      }
+      this.dispatch.reopenForReview(chunk.dispatchId, ownerFindings(chunk.surface, notes));
+      reopened.push({ chunkId, dispatchId: chunk.dispatchId });
+    }
+
+    return { sessionId, reopened, unrouted };
   }
 
   /**
