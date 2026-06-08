@@ -140,8 +140,17 @@ export class PlanRepository {
   private sqlite: Database;
   private db: BunSQLiteDatabase;
 
-  /** Open (or create) the shared db, enable WAL + FK enforcement, apply migrations. */
-  constructor(dbPath: string = DEFAULT_DB_PATH) {
+  /**
+   * Open (or create) the shared db, enable WAL + FK enforcement, and (by default) apply
+   * migrations.
+   *
+   * `opts.migrate: false` skips the migrate-on-construct — for a long-running process that a
+   * shared launch (`make up`) co-starts with others against the same db: two processes
+   * migrating one SQLite file at once race and one exits 1, so the launch migrates ONCE up
+   * front (`make migrate`) and the processes open a migrated db (ADR 0016 refinement). A
+   * standalone construct (tests, CLIs, a fresh dev run) keeps the default and self-migrates.
+   */
+  constructor(dbPath: string = DEFAULT_DB_PATH, opts: { migrate?: boolean } = {}) {
     const dir = dirname(dbPath);
     if (dir && dir !== ".") mkdirSync(dir, { recursive: true });
 
@@ -149,7 +158,7 @@ export class PlanRepository {
     this.sqlite.run("PRAGMA journal_mode = WAL");
     this.sqlite.run("PRAGMA foreign_keys = ON"); // the FKs are real integrity, not decoration
     this.db = drizzle(this.sqlite);
-    migrate(this.db, { migrationsFolder: MIGRATIONS_DIR });
+    if (opts.migrate !== false) migrate(this.db, { migrationsFolder: MIGRATIONS_DIR });
   }
 
   // --- features ---

@@ -89,8 +89,10 @@ export class SessionLoop {
 
 if (import.meta.main) {
   const config = await loadConfig();
-  const plan = new PlanRepository();
-  const dispatch = new DispatchRepository();
+  // migrate: false — `make up` co-launches this with the daemon, so migration runs once up
+  // front (`make migrate`); migrating here too would race the other process (ADR 0016).
+  const plan = new PlanRepository(undefined, { migrate: false });
+  const dispatch = new DispatchRepository(undefined, { migrate: false });
   const service = new PlanDispatchService(plan, dispatch);
   await new SessionLoop(plan, service, config).run();
 }
