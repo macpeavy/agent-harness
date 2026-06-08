@@ -56,12 +56,16 @@ export function renderFeatureStatus(s: FeatureStatus): string {
   const lines: string[] = [`Feature ${s.feature.id} "${s.feature.title}" — ${s.feature.state}`];
   if (s.sessions.length === 0) lines.push("Sessions: none");
 
-  // The completion signal (ADR 0020): surface sessions that FINISHED or ESCALATED up top, so
-  // the chief sees them on its next look without scanning — pull, but prominent.
+  // The completion signal (ADR 0020): surface sessions AWAITING REVIEW or ESCALATED up top, so
+  // the chief sees them on its next look without scanning — pull, but prominent. A session in
+  // `review` is build-complete with its PR open for the owner to review/merge (NOT `done` —
+  // `done` means the owner already merged it, ADR 0020 §6).
   const attention: string[] = [];
   for (const sess of s.sessions) {
-    if (sess.session.state === "done") attention.push(`${sess.session.id} finished — review/merge its PR`);
-    else if (sess.escalations.length > 0)
+    if (sess.session.state === "review") {
+      const pr = sess.session.prNumber ? ` (PR #${sess.session.prNumber})` : "";
+      attention.push(`${sess.session.id} awaiting your review${pr} — review/merge its PR`);
+    } else if (sess.escalations.length > 0)
       attention.push(`${sess.session.id} has ${sess.escalations.length} escalation(s) to route`);
   }
   if (attention.length > 0) lines.push(`NEEDS ATTENTION: ${attention.join("; ")}`);

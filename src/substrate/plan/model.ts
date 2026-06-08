@@ -21,15 +21,23 @@ export const FEATURE_TRANSITIONS: Record<FeatureState, readonly FeatureState[]> 
 /**
  * A session's lifecycle (ADR 0020) — a ~1k-LOC unit of a feature with its own session-main
  * branch + one PR. `planning` (its chunk-DAG authored/amended) → `ready` (settled) →
- * `building` (chunks dispatching) → `done` (chunks done/superseded) / `failed`.
+ * `building` (chunks dispatching) → `review` (chunks all landed in session-main; the PR
+ * awaits the owner) → `done` (the owner merged the PR) / `failed`.
+ *
+ * `review` is the load-bearing addition (ADR 0020 §6): build-complete is *not* owner-merged.
+ * A session sits in `review` once its chunks are in session-main, surfacing the PR as the
+ * owner's to merge; the owner-review → amend loop (slice 4b) runs *within* `review` (amends
+ * re-land in session-main without leaving the state); the owner's merge is the only thing
+ * that moves `review → done`. So `done` now means "merged", and the merge stays the gate.
  */
-export const SESSION_STATES = ["planning", "ready", "building", "done", "failed"] as const;
+export const SESSION_STATES = ["planning", "ready", "building", "review", "done", "failed"] as const;
 export type SessionState = (typeof SESSION_STATES)[number];
 
 export const SESSION_TRANSITIONS: Record<SessionState, readonly SessionState[]> = {
   planning: ["ready"],
   ready: ["building"],
-  building: ["done", "failed"],
+  building: ["review", "failed"], // chunks all landed → awaiting the owner's review/merge
+  review: ["done", "failed"], // the owner merges the PR → done; abandoned → failed
   done: [],
   failed: [],
 };
