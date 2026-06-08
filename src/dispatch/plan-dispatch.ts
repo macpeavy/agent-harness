@@ -71,6 +71,8 @@ export interface ParkedEscalation {
   chunkId: string;
   dispatchId: string;
   kind: Escalation;
+  /** Free-text "why" (e.g. a build timeout), if recorded — surfaced so the chief sees it. */
+  reason: string | null;
 }
 
 /** One piece of owner feedback on a session PR, as handed to `addressReview` (ADR 0020 slice
@@ -91,6 +93,15 @@ export interface AddressReviewResult {
   unrouted: { path: string | null; body: string; reason: string }[];
 }
 
+/** The result of abandoning a feature (the operator kill switch). `alreadyAbandoned` makes the
+ *  CLI idempotent; `sessions` (with branch + PR) is what it closes/deletes on GitHub. */
+export interface AbandonedFeature {
+  featureId: string;
+  alreadyAbandoned: boolean;
+  sessions: { id: string; branch: string | null; prNumber: number | null }[];
+  dispatchesAbandoned: number;
+}
+
 /** One session's progress: its state + PR linkage, its chunks, the readout over its
  *  dispatches, and the parked escalations within it. */
 export interface SessionStatus {
@@ -101,6 +112,7 @@ export interface SessionStatus {
     prNumber: number | null;
     prUrl: string | null;
     locEstimate: number | null;
+    lastError: string | null;
   };
   chunks: ChunkStatus[];
   readout: Readout;
@@ -455,6 +467,31 @@ export class PlanDispatchService {
   }
 
   /**
+   * Abandon a feature — the operator kill switch (the abandon CLI, ADR 0009/0019), the "kill
+   * this feature" the reaper (dead sessions) doesn't cover. Force-transitions the feature, its
+   * sessions, their chunks (plan) AND the chunks' dispatches (registry) to terminal `abandoned`.
+   * This is the seam allowed to touch both repositories (ADR 0017). Idempotent: an already-
+   * abandoned feature is a no-op (so the CLI can re-run after a partial GitHub failure). Returns
+   * the sessions (branch + PR) for the CLI to close the PRs and delete the branches.
+   */
+  abandonFeature(featureId: string): AbandonedFeature {
+    const feature = this.plan.getFeature(featureId);
+    if (!feature) throw new Error(`no feature ${featureId}`);
+    if (feature.state === "abandoned")
+      return { featureId, alreadyAbandoned: true, sessions: [], dispatchesAbandoned: 0 };
+
+    // The live dispatch ids of every chunk, read before the plan abandon (the chunks keep their
+    // dispatchId, but collect now while it's plainly the active set) — the registry's to abandon.
+    const dispatchIds: string[] = [];
+    for (const session of this.plan.listSessions(featureId))
+      for (const chunk of this.plan.listChunks(session.id)) if (chunk.dispatchId) dispatchIds.push(chunk.dispatchId);
+
+    const sessions = this.plan.abandonFeature(featureId);
+    this.dispatch.abandonMany(dispatchIds);
+    return { featureId, alreadyAbandoned: false, sessions, dispatchesAbandoned: dispatchIds.length };
+  }
+
+  /**
    * The PR number of a session whose work is up for owner review (ADR 0020 slice 4b) — what
    * the chief's `address_review` tool reads the PR comments from before routing them. Throws
    * if the session isn't in `review` (nothing to review yet) or has no PR linked.
@@ -565,7 +602,7 @@ export class PlanDispatchService {
         if (!c.dispatchId) continue;
         const d = dispatchById.get(c.dispatchId);
         if (d?.state === "escalated" && d.escalated)
-          escalations.push({ chunkId: c.id, dispatchId: c.dispatchId, kind: d.escalated });
+          escalations.push({ chunkId: c.id, dispatchId: c.dispatchId, kind: d.escalated, reason: d.escalationReason });
       }
 
       return {
@@ -576,6 +613,7 @@ export class PlanDispatchService {
           prNumber: session.prNumber,
           prUrl: session.prUrl,
           locEstimate: session.locEstimate,
+          lastError: session.lastError,
         },
         chunks: chunkStatuses,
         readout: cheapAbleFraction([...dispatchById.values()]),

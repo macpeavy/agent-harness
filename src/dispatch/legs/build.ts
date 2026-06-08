@@ -102,6 +102,7 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
       agent,
       prompt,
       mode: "sync",
+      timeoutMs: config.agentTimeoutMs,
     });
 
     // 3. Did the builder actually change anything?

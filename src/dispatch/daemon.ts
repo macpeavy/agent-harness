@@ -15,6 +15,7 @@ import { runReviewLeg, type ReviewResult, type ReviewTarget } from "./legs/revie
 import { runAmendLeg, type AmendResult } from "./legs/amend";
 import { runMergeLeg, type MergeResult, type MergeTarget } from "./legs/merge";
 import { loadConfig, type SubstrateConfig } from "../config";
+import { AgentTimeoutError } from "../opencode/client";
 import { DispatchRepository, TRANSITIONS, type Dispatch } from "../substrate/dispatch";
 
 /** The legs the daemon drives — injected so the orchestration is testable with fakes. */
@@ -61,7 +62,11 @@ export class DispatchDaemon {
       try {
         await this.step(dispatch);
       } catch (err) {
-        this.fail(dispatch.id, err);
+        // A model-turn timeout isn't a dead end — escalate it (parked, chief-visible) with the
+        // reason, so the chief can promote the tier or re-decompose, rather than a terminal fail
+        // or an unhandled throw the loop can't survive (ADR 0020). Anything else fails.
+        if (err instanceof AgentTimeoutError) this.escalateTimeout(dispatch.id, err);
+        else this.fail(dispatch.id, err);
       }
       driven++;
     }
@@ -223,6 +228,20 @@ export class DispatchDaemon {
     const dispatch = this.require(id);
     if (!dispatch.sessionBranch) return;
     await this.legs.merge({ branch, sessionBranch: dispatch.sessionBranch, title: dispatch.title }, this.config);
+  }
+
+  // A model turn timed out: escalate it for the chief (parked, surfaced in status with the
+  // reason) so they can tier-promote or re-decompose. If the current state has no escalate edge
+  // (it shouldn't — a timeout happens mid build/review/amend), fall back to fail so it's never
+  // left stuck. `attended` is the kind: a timeout wants a human/chief call, not an auto-retry.
+  private escalateTimeout(id: string, err: AgentTimeoutError): void {
+    const current = this.repo.get(id);
+    if (current && TRANSITIONS[current.state].includes("escalated")) {
+      this.repo.escalate(id, "attended", err.message);
+      console.error(`dispatch ${id} escalated (timeout): ${err.message}`);
+    } else {
+      this.fail(id, err);
+    }
   }
 
   // Mark a dispatch failed (if the graph allows it from its current state) and log the

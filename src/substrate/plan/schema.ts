@@ -36,6 +36,10 @@ export const sessions = sqliteTable("sessions", {
   // The chief's ~1k-LOC target used to draw the session boundary (ADR 0020) — advisory.
   locEstimate: integer("loc_estimate"),
   state: text("state", { enum: SESSION_STATES }).notNull().default("planning"),
+  // The most recent session-loop tick error (ADR 0020 robustness) — set when advance() throws,
+  // cleared on the next clean tick. The loop catches + continues (one session's throw must
+  // never exit the process); this is how the error surfaces in `status` for the chief.
+  lastError: text("last_error"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });

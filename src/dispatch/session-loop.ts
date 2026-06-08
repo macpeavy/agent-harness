@@ -47,12 +47,23 @@ export class SessionLoop {
   async runOnce(): Promise<number> {
     let advanced = 0;
     for (const session of this.plan.listAllSessions()) {
-      if (session.state === "done" || session.state === "failed") continue;
+      if (session.state === "done" || session.state === "failed" || session.state === "abandoned") continue;
       const feature = this.plan.getFeature(session.featureId);
       if (!feature || feature.state === "planning") continue; // not yet approved — the owner gate
 
-      await this.advance(session.id, feature.title, session.branch === null);
-      advanced++;
+      // One session's throw must NEVER exit the loop process (the recurring exit-1 crash). Catch
+      // per session: record the error against it (so the chief sees it in status) and CONTINUE —
+      // the other sessions advance, and this one retries next tick (advance is idempotent, so a
+      // transient failure self-heals). A clean tick clears any prior error.
+      try {
+        await this.advance(session.id, feature.title, session.branch === null);
+        if (session.lastError !== null) this.plan.clearSessionError(session.id);
+        advanced++;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`session-loop: session ${session.id} tick failed: ${message}`);
+        this.plan.setSessionError(session.id, message);
+      }
     }
     return advanced;
   }

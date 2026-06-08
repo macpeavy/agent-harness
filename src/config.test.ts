@@ -34,6 +34,7 @@ describe("loadConfig", () => {
     "AH_BUILDER_STRONG_AGENT",
     "AH_REVIEWER_AGENT",
     "AH_AMEND_CAP",
+    "AH_AGENT_TIMEOUT_MS",
   ] as const;
   let saved: Record<string, string | undefined>;
 
@@ -70,6 +71,7 @@ describe("loadConfig", () => {
     process.env.AH_BUILDER_STRONG_AGENT = "builder-strong-alt";
     process.env.AH_REVIEWER_AGENT = "principal";
     process.env.AH_AMEND_CAP = "5";
+    process.env.AH_AGENT_TIMEOUT_MS = "900000";
     const config = await loadConfig();
 
     expect(config).toEqual({
@@ -80,6 +82,7 @@ describe("loadConfig", () => {
       builderStrongAgent: "builder-strong-alt",
       reviewerAgent: "principal",
       amendCap: 5,
+      agentTimeoutMs: 900000,
     });
   });
 

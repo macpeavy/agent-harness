@@ -155,11 +155,23 @@ export class DispatchRepository {
   }
 
   /**
-   * Escalate a dispatch (cap exceeded, ADR 0008): move to 'escalated' and record the
-   * escalation kind in the same atomic step.
+   * Escalate a dispatch (cap exceeded, ADR 0008; or a build timeout, ADR 0020): move to
+   * 'escalated' and record the escalation kind — plus an optional free-text reason (e.g. the
+   * timeout) that `status` surfaces — in the same atomic step.
    */
-  escalate(id: string, kind: Escalation): void {
-    this.move(id, "escalated", { escalated: kind });
+  escalate(id: string, kind: Escalation, reason?: string): void {
+    this.move(id, "escalated", reason === undefined ? { escalated: kind } : { escalated: kind, escalationReason: reason });
+  }
+
+  /**
+   * Abandon a set of dispatches — the operator kill switch (the abandon CLI, ADR 0009/0019).
+   * Force-sets terminal `abandoned` in one statement, bypassing the state graph deliberately (an
+   * operator kills from whatever state). Idempotent; a no-op for an empty list. The service calls
+   * this with the dispatch ids of an abandoned feature's chunks (the repos stay independent).
+   */
+  abandonMany(ids: string[]): void {
+    if (ids.length === 0) return;
+    this.db.update(dispatches).set({ state: "abandoned", updatedAt: Date.now() }).where(inArray(dispatches.id, ids)).run();
   }
 
   /** Link OpenCode session ids onto a dispatch (one atomic UPDATE). */

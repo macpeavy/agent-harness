@@ -49,6 +49,7 @@ export async function runAmendLeg(
       agent: config.builderAgent,
       prompt,
       mode: "sync",
+      timeoutMs: config.agentTimeoutMs,
     });
 
     // Did the amend change anything?

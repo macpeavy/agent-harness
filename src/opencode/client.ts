@@ -22,14 +22,33 @@ export interface AssistantReply {
   serverMs: number;
 }
 
+/**
+ * A model turn exceeded its deadline (a slow build, a hung session). A distinct type so the
+ * daemon can route a timeout into the escalation path (parked, chief-visible) instead of a hard
+ * fail or an unhandled throw (ADR 0020 robustness).
+ */
+export class AgentTimeoutError extends Error {
+  constructor(
+    readonly sessionId: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`agent session ${sessionId} did not reply within ${timeoutMs}ms`);
+    this.name = "AgentTimeoutError";
+  }
+}
+
 export class OpencodeClient {
   constructor(private readonly baseUrl: string) {}
 
-  private async post(path: string, body: unknown): Promise<unknown> {
+  // POST with an optional deadline. On a timeout the AbortSignal fires and fetch throws an
+  // AbortError; the caller (sendMessage) maps that to AgentTimeoutError. No timeout = no signal
+  // (the prior behavior), so unrelated POSTs are unaffected.
+  private async post(path: string, body: unknown, timeoutMs?: number): Promise<unknown> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
     });
     if (!res.ok) {
       throw new Error(`POST ${path} → ${res.status} ${await res.text()}`);
@@ -62,11 +81,10 @@ export class OpencodeClient {
     }
   }
 
-  /** Send a prompt and block until the assistant reply completes. */
-  async sendMessage(sessionID: string, text: string): Promise<AssistantReply> {
-    const m = (await this.post(`/session/${sessionID}/message`, {
-      parts: [{ type: "text", text }],
-    })) as {
+  /** Send a prompt and block until the assistant reply completes, up to `opts.timeoutMs` (no
+   *  cap if unset). A timeout aborts the request and throws AgentTimeoutError. */
+  async sendMessage(sessionID: string, text: string, opts: { timeoutMs?: number } = {}): Promise<AssistantReply> {
+    type MessageResponse = {
       info?: {
         modelID?: string;
         providerID?: string;
@@ -76,6 +94,17 @@ export class OpencodeClient {
       };
       parts?: Array<{ type: string; text?: string }>;
     };
+
+    let m: MessageResponse;
+    try {
+      m = (await this.post(`/session/${sessionID}/message`, { parts: [{ type: "text", text }] }, opts.timeoutMs)) as MessageResponse;
+    } catch (err) {
+      // AbortSignal.timeout fires a DOMException named "TimeoutError" (or "AbortError"); map it
+      // to the typed timeout so the daemon escalates instead of hard-failing.
+      if (opts.timeoutMs && err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError"))
+        throw new AgentTimeoutError(sessionID, opts.timeoutMs);
+      throw err;
+    }
 
     const info = m.info ?? {};
     const textPart = (m.parts ?? []).find((p) => p.type === "text");
@@ -116,7 +145,7 @@ export class OpencodeClient {
     sessionID: string,
     opts: { timeoutMs?: number; intervalMs?: number } = {},
   ): Promise<AssistantReply> {
-    const timeoutMs = opts.timeoutMs ?? 180_000;
+    const timeoutMs = opts.timeoutMs ?? 600_000;
     const intervalMs = opts.intervalMs ?? 1500;
     const deadline = Date.now() + timeoutMs;
 
@@ -158,7 +187,7 @@ export class OpencodeClient {
       }
       await Bun.sleep(intervalMs);
     }
-    throw new Error(`waitForReply: session ${sessionID} did not idle within ${timeoutMs}ms`);
+    throw new AgentTimeoutError(sessionID, timeoutMs);
   }
 
   /** Sum input/output tokens across every assistant message in a session (the full

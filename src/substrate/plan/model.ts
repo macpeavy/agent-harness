@@ -8,7 +8,7 @@ export type { Feature, NewFeature, Session, NewSession, Chunk, NewChunk, Edge, N
 
 /** A feature's lifecycle (ADR 0020): the chief meta-decomposes it into sessions (planning,
  *  amendable), the owner approves (ready), sessions dispatch (building), all done (done). */
-export const FEATURE_STATES = ["planning", "ready", "building", "done"] as const;
+export const FEATURE_STATES = ["planning", "ready", "building", "done", "abandoned"] as const;
 export type FeatureState = (typeof FEATURE_STATES)[number];
 
 export const FEATURE_TRANSITIONS: Record<FeatureState, readonly FeatureState[]> = {
@@ -16,6 +16,10 @@ export const FEATURE_TRANSITIONS: Record<FeatureState, readonly FeatureState[]> 
   ready: ["building"], // a session starts dispatching
   building: ["done"], // every session reached done
   done: [],
+  // `abandoned` is the operator kill switch (the abandon CLI) — terminal. It's reached by a
+  // deliberate force-transition (PlanRepository.abandonFeature), NOT a graph edge: an operator
+  // kills a feature from whatever state it's in, so the normal lifecycle has no edge to it.
+  abandoned: [],
 };
 
 /**
@@ -30,16 +34,17 @@ export const FEATURE_TRANSITIONS: Record<FeatureState, readonly FeatureState[]> 
  * re-land in session-main without leaving the state); the owner's merge is the only thing
  * that moves `review → done`. So `done` now means "merged", and the merge stays the gate.
  */
-export const SESSION_STATES = ["planning", "ready", "building", "review", "done", "failed"] as const;
+export const SESSION_STATES = ["planning", "ready", "building", "review", "done", "failed", "abandoned"] as const;
 export type SessionState = (typeof SESSION_STATES)[number];
 
 export const SESSION_TRANSITIONS: Record<SessionState, readonly SessionState[]> = {
   planning: ["ready"],
   ready: ["building"],
   building: ["review", "failed"], // chunks all landed → awaiting the owner's review/merge
-  review: ["done", "failed"], // the owner merges the PR → done; abandoned → failed
+  review: ["done", "failed"], // the owner merges the PR → done
   done: [],
   failed: [],
+  abandoned: [], // operator kill switch (abandon CLI) — terminal, reached by force-transition
 };
 
 /**
@@ -49,7 +54,7 @@ export const SESSION_TRANSITIONS: Record<SessionState, readonly SessionState[]> 
  * chunks (`escalated → superseded`, re-decompose; the splits are new chunks). Terminal:
  * done, failed, superseded.
  */
-export const CHUNK_STATES = ["planned", "dispatched", "done", "escalated", "failed", "superseded"] as const;
+export const CHUNK_STATES = ["planned", "dispatched", "done", "escalated", "failed", "superseded", "abandoned"] as const;
 export type ChunkState = (typeof CHUNK_STATES)[number];
 
 export const CHUNK_TRANSITIONS: Record<ChunkState, readonly ChunkState[]> = {
@@ -59,6 +64,7 @@ export const CHUNK_TRANSITIONS: Record<ChunkState, readonly ChunkState[]> = {
   done: [],
   failed: [],
   superseded: [], // re-decomposed: retired, its work moved to the replacement chunks
+  abandoned: [], // operator kill switch (abandon CLI) — terminal, reached by force-transition
 };
 
 /** Which build tier a chunk is hinted for (ADR 0014). */
