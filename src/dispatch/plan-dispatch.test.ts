@@ -279,6 +279,33 @@ describe("addressReview (owner-review → amend, ADR 0020 slice 4b)", () => {
   });
 });
 
+describe("recordOutcomes — failure branch (ADR 0023 row 7)", () => {
+  it("moves the session to needs-attention within one tick when a chunk parks — never wedges in building", () => {
+    decompose([chunk("a"), chunk("b")]);
+    service.dispatchReady("S1");
+    driveTo("a", "done");
+    driveTo("b", "escalated"); // b parked (e.g. a no-op build)
+    service.recordOutcomes("S1");
+
+    expect(plan.getChunk("b")?.state).toBe("escalated");
+    expect(plan.getSession("S1")?.state).toBe("needs-attention"); // NOT building, NOT review
+  });
+
+  it("a parked chunk's session is routable and resumes to building once the chief promotes it", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1");
+    dispatch.transition("a", "building");
+    dispatch.escalate("a", "no-op"); // parked as a no-op (the C2 case)
+    service.recordOutcomes("S1");
+    expect(plan.getSession("S1")?.state).toBe("needs-attention");
+    expect(plan.getChunk("a")?.state).toBe("escalated"); // routable
+
+    service.promote("a"); // chief routes the no-op-parked chunk → re-dispatched
+    service.recordOutcomes("S1");
+    expect(plan.getSession("S1")?.state).toBe("building"); // resumed, no longer wedged
+  });
+});
+
 describe("abandonFeature (the operator kill switch, ADR 0009/0019)", () => {
   it("transitions the feature + its sessions + chunks + dispatches to abandoned, returning the PRs", () => {
     decompose([chunk("a"), chunk("b")]);

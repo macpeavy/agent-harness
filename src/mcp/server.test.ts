@@ -191,6 +191,20 @@ describe("status", () => {
     expect(body).toContain("Session S1 [review]");
   });
 
+  it("surfaces a needs-attention session and its parked chunk's reason (ADR 0023 row 7)", async () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    service.dispatchReady("S1");
+    dispatch.transition("a", "building");
+    dispatch.escalate("a", "no-op"); // the cheap builder no-op'd (the C2 case)
+    service.recordOutcomes("S1"); // flows back → session needs-attention within the tick
+
+    const body = await callText("status", { featureId: "F1" });
+    expect(body).toContain("NEEDS ATTENTION: S1 needs attention");
+    expect(body).toContain("Session S1 [needs-attention]");
+    expect(body).toContain("no-op"); // the parked reason, routable by the chief
+  });
+
   it("returns a tool error for an unknown feature", async () => {
     expect(await isError("status", { featureId: "ghost" })).toBe(true);
   });

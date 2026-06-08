@@ -30,16 +30,18 @@ export interface Issue {
 
 /**
  * The build prompt: the load-bearing context pack (ADR 0018, pushed) followed by the
- * issue. Pure so it's testable without dispatching the agent.
+ * issue. Pure so it's testable without dispatching the agent. `reprompt`, when given, is the
+ * no-op gate's sharper re-instruction (ADR 0023) — appended last so it's the final word.
  */
-export function buildPrompt(issue: Issue, contextPack: string): string {
+export function buildPrompt(issue: Issue, contextPack: string, reprompt?: string): string {
   const context = contextPack ? `${contextPack}\n\n---\n\n` : "";
+  const tail = reprompt ? `\n\n${reprompt}` : "";
   return (
     context +
     `Implement the following issue by editing files in the current working directory. ` +
     `Use your tools to make the change, then typecheck/test it. Do NOT run git or open a ` +
     `pull request — the substrate handles version control for you.\n\n` +
-    `Issue ${issue.id}: ${issue.title}\n\n${issue.body}`
+    `Issue ${issue.id}: ${issue.title}\n\n${issue.body}${tail}`
   );
 }
 
@@ -68,7 +70,11 @@ export function dispatchBranch(issue: Issue): string {
   return `agent/${issue.id.toLowerCase()}-${slugify(issue.title)}`;
 }
 
-export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promise<BuildResult> {
+export async function runBuildLeg(
+  issue: Issue,
+  config: SubstrateConfig,
+  opts: { reprompt?: string } = {},
+): Promise<BuildResult> {
   const id = issue.id.toLowerCase();
   const branch = dispatchBranch(issue);
   mkdirSync(config.worktreeRoot, { recursive: true });
@@ -96,7 +102,7 @@ export async function runBuildLeg(issue: Issue, config: SubstrateConfig): Promis
     //    pack — standards + the chunk's skill(s) — is PUSHED into the prompt (ADR 0018),
     //    not left to the model to read from a pointer.
     const pack = buildContextPack({ repoPath: config.repoPath, surface: issue.surface, skills: issue.skills });
-    const prompt = buildPrompt(issue, pack);
+    const prompt = buildPrompt(issue, pack, opts.reprompt);
     const run = await runAgent(worktree, {
       title: `build ${issue.id}`,
       agent,

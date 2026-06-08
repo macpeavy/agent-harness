@@ -84,6 +84,11 @@ export function renderFeatureStatus(s: FeatureStatus): string {
     if (sess.session.state === "review") {
       const pr = sess.session.prNumber ? ` (PR #${sess.session.prNumber})` : "";
       attention.push(`${sess.session.id} awaiting your review${pr} — review/merge its PR`);
+    } else if (sess.session.state === "needs-attention") {
+      // A chunk parked/failed and the session stopped (ADR 0023 row 7) — route it so the DAG
+      // can resume. The parked chunk's reason shows in the per-session escalations below.
+      const n = sess.escalations.length;
+      attention.push(`${sess.session.id} needs attention — ${n} parked chunk(s) to route (redecompose/promote)`);
     } else if (sess.escalations.length > 0)
       attention.push(`${sess.session.id} has ${sess.escalations.length} escalation(s) to route`);
     // A recurring session-loop tick error (the loop caught it and kept going) — surface it so
