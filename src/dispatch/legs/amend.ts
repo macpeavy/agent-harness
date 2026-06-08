@@ -48,8 +48,10 @@ export async function runAmendLeg(
       title: `amend ${target.branch}`,
       agent: config.builderAgent,
       prompt,
-      mode: "sync",
-      timeoutMs: config.agentTimeoutMs,
+      // Idle-polling drive (AGENT-38) — see build leg: idle window catches a hang, absolute backstop the runaway.
+      mode: "wake",
+      idleMs: config.agentIdleMs,
+      absoluteMs: config.agentTimeoutMs,
     });
 
     // Did the amend change anything?

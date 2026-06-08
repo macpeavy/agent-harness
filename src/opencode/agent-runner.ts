@@ -7,7 +7,7 @@
 // AGENT-8). The legs (build/review/amend) layer their git/GitHub work around this; the
 // generic "run an agent" lives here, next to the client + serve it composes (ADR 0017).
 
-import { OpencodeClient } from "./client";
+import { AgentTimeoutError, OpencodeClient } from "./client";
 import { startServe } from "./serve";
 
 export type RunMode = "sync" | "wake";
@@ -19,11 +19,29 @@ export interface RunAgentOpts {
   prompt: string;
   /** Session title (shows up in OpenCode). */
   title?: string;
-  /** `sync` blocks on the reply; `wake` uses the token-free wake. Default `sync`. */
+  /** `sync` blocks on the reply; `wake` uses the token-free wake (idle-polling). Default `sync`. */
   mode?: RunMode;
-  /** Deadline (ms) for the model turn; on overrun the leg throws AgentTimeoutError, which the
-   *  daemon escalates. Unset = the client's default ceiling. */
-  timeoutMs?: number;
+  /** Idle window (ms): in `wake` mode, abort if the session produces no new activity for this
+   *  long (a hang). Unset = the client default. */
+  idleMs?: number;
+  /** Absolute backstop (ms): abort a runaway session even while it's still producing. Also the
+   *  hard cap for `sync` mode (which can't idle-detect). */
+  absoluteMs?: number;
+}
+
+/** Run an agent's drive; if it times out, tear down the OpenCode session so a hung-and-still-
+ *  generating session can't keep billing after the substrate escalates (AGENT-38 part 4).
+ *  deleteSession is idempotent (404-safe); a teardown failure must not mask the timeout. */
+export interface SessionKiller {
+  deleteSession(id: string): Promise<void>;
+}
+export async function driveOrAbort<T>(client: SessionKiller, sessionID: string, drive: () => Promise<T>): Promise<T> {
+  try {
+    return await drive();
+  } catch (err) {
+    if (err instanceof AgentTimeoutError) await client.deleteSession(sessionID).catch(() => {});
+    throw err;
+  }
 }
 
 export interface AgentRun {
@@ -43,10 +61,11 @@ export async function runAgent(worktree: string, opts: RunAgentOpts): Promise<Ag
     const sessionID = await client.createSession({ title: opts.title, agent: opts.agent });
 
     const start = Date.now();
-    const reply =
+    const reply = await driveOrAbort(client, sessionID, () =>
       (opts.mode ?? "sync") === "wake"
-        ? await runWake(client, sessionID, opts.prompt, opts.timeoutMs)
-        : (await client.sendMessage(sessionID, opts.prompt, { timeoutMs: opts.timeoutMs })).text;
+        ? runWake(client, sessionID, opts.prompt, opts.idleMs, opts.absoluteMs)
+        : client.sendMessage(sessionID, opts.prompt, { timeoutMs: opts.absoluteMs }).then((r) => r.text),
+    );
     const waitedMs = Date.now() - start;
 
     const tokens = await client.sessionTokens(sessionID);
@@ -56,9 +75,15 @@ export async function runAgent(worktree: string, opts: RunAgentOpts): Promise<Ag
   }
 }
 
-// Fire the prompt without waiting, then let the substrate poll for idle — no tokens
-// burn while the agent thinks.
-async function runWake(client: OpencodeClient, sessionID: string, prompt: string, timeoutMs?: number): Promise<string> {
+// Fire the prompt without waiting, then poll for completion with idle detection — no tokens
+// burn while the agent thinks, and a hang is caught on idle rather than a wall-clock cap.
+async function runWake(
+  client: OpencodeClient,
+  sessionID: string,
+  prompt: string,
+  idleMs?: number,
+  absoluteMs?: number,
+): Promise<string> {
   await client.promptAsync(sessionID, prompt);
-  return (await client.waitForReply(sessionID, { timeoutMs })).text;
+  return (await client.waitForReply(sessionID, { idleMs, absoluteMs })).text;
 }

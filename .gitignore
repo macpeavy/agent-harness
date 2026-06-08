@@ -26,6 +26,9 @@ litellm.db
 # Substrate runtime state (dispatch registry db + WAL/SHM sidecars) — not committed
 .substrate/
 
+# Per-dispatch git worktrees — in-project so agent edits need no external_directory prompt (AGENT-38)
+.worktrees/
+
 # OS
 .DS_Store
 Thumbs.db

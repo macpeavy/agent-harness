@@ -16,7 +16,8 @@ const CONFIG = {
   builderStrongAgent: "builder-strong",
   reviewerAgent: "reviewer",
   amendCap: 3,
-  agentTimeoutMs: 600_000,
+  agentIdleMs: 120_000,
+  agentTimeoutMs: 1_800_000,
 } satisfies SubstrateConfig;
 
 let dir: string;
@@ -146,6 +147,43 @@ describe("SessionLoop.runOnce", () => {
     const advanced = await loop().runOnce();
     expect(advanced).toBe(0);
     expect(opened).toEqual([]);
+  });
+
+  // AGENT-38 part 3: count REAL progress, not "processed a session," so the loop sleeps when
+  // nothing changed (the CPU-peg fix) — but parked sessions are still re-checked so they recover.
+  it("counts progress, not processing — a no-op tick over an in-flight session returns 0 (loop sleeps)", async () => {
+    plan.createFeature(FEATURE);
+    plan.createSession({ id: "S1", featureId: "F1" });
+    plan.addChunk(chunk("a"));
+    service.approve("S1");
+
+    const first = await loop().runOnce(); // opens S1 + dispatches a → real progress
+    expect(first).toBeGreaterThan(0);
+
+    const second = await loop().runOnce(); // a is in-flight (queued), nothing changed
+    expect(second).toBe(0); // → the poll loop sleeps instead of busy-spinning
+  });
+
+  it("a parked session returns 0 each tick, then resumes (advanced>0) when the chief routes it", async () => {
+    plan.createFeature(FEATURE);
+    plan.createSession({ id: "S1", featureId: "F1" });
+    plan.addChunk(chunk("a"));
+    service.approve("S1");
+    await loop().runOnce(); // opens + dispatches a
+    dispatch.transition("a", "building");
+    dispatch.escalate("a", "no-op"); // the build parked (the C2 case)
+
+    const park = await loop().runOnce(); // reaps a→escalated, S1→needs-attention (a transition)
+    expect(plan.getSession("S1")?.state).toBe("needs-attention");
+    expect(park).toBeGreaterThan(0); // the transition is real progress
+
+    const idle = await loop().runOnce(); // still parked, nothing changes
+    expect(idle).toBe(0); // loop sleeps — no busy-spin on a parked session
+
+    service.promote("a"); // the chief routes it
+    const resume = await loop().runOnce(); // S1: needs-attention → building, within one tick
+    expect(plan.getSession("S1")?.state).toBe("building");
+    expect(resume).toBeGreaterThan(0);
   });
 
   // The priority fix: a throw in one session's tick must never exit the loop process.

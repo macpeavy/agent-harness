@@ -40,9 +40,14 @@ export class SessionLoop {
   ) {}
 
   /**
-   * One tick over every session. Opens + advances the sessions of approved features; skips
+   * One tick over every session. Opens + advances the sessions of approved features; skips only
    * terminal sessions and sessions of un-approved (planning) features. Returns the count of
-   * sessions advanced — so a poll loop knows whether to sleep.
+   * sessions that made REAL progress this tick (opened, flowed an outcome, materialised a
+   * dispatch, or changed state) — NOT the count processed (AGENT-38). A tick that merely
+   * re-checks parked/in-flight sessions and changes nothing returns 0, so the poll loop sleeps
+   * instead of pegging a core. A `needs-attention` session is still re-checked every tick (not
+   * skipped) so it resumes the moment the chief routes its parked chunk — it just doesn't COUNT
+   * as progress while nothing has changed.
    */
   async runOnce(): Promise<number> {
     let advanced = 0;
@@ -52,14 +57,17 @@ export class SessionLoop {
       if (!feature || feature.state === "planning") continue; // not yet approved — the owner gate
 
       // One session's throw must NEVER exit the loop process (the recurring exit-1 crash). Catch
-      // per session: record the error against it (so the chief sees it in status) and CONTINUE —
-      // the other sessions advance, and this one retries next tick (advance is idempotent, so a
-      // transient failure self-heals). A clean tick clears any prior error.
+      // per session: record the error (so the chief sees it in status) and CONTINUE — the others
+      // advance, and this one retries next tick (advance is idempotent, so a transient failure
+      // self-heals). A clean tick clears any prior error.
       try {
-        await this.advance(session.id, feature.title, session.branch === null);
+        const progressed = await this.advance(session.id, feature.title, session.branch === null);
         if (session.lastError !== null) this.plan.clearSessionError(session.id);
-        advanced++;
+        if (progressed) advanced++;
       } catch (err) {
+        // Record + continue, but do NOT count it as progress — a persistently-throwing session
+        // (e.g. session-open failing) must let the loop sleep and retry at poll cadence, not
+        // hot-loop on the error (that's the CPU peg in a different guise).
         const message = err instanceof Error ? err.message : String(err);
         console.error(`session-loop: session ${session.id} tick failed: ${message}`);
         this.plan.setSessionError(session.id, message);
@@ -82,19 +90,29 @@ export class SessionLoop {
     this.running = false;
   }
 
-  // Open session-main if needed, then materialise ready chunks and reap landed outcomes.
-  private async advance(sessionId: string, title: string, needsOpen: boolean): Promise<void> {
+  // Open session-main if needed, then reap landed outcomes and materialise ready chunks. Returns
+  // whether this tick made REAL progress (AGENT-38) — so a no-op pass over a parked/in-flight
+  // session doesn't keep the poll loop awake. Progress = opened the session, flowed an outcome,
+  // materialised a dispatch, or changed the session's state (e.g. building→needs-attention, or
+  // needs-attention→building when the chief routes a parked chunk).
+  private async advance(sessionId: string, title: string, needsOpen: boolean): Promise<boolean> {
+    let opened = false;
     if (needsOpen) {
       const links = await this.legs.open(sessionId, title, this.config);
       this.plan.linkSessionPr(sessionId, links);
+      opened = true;
     }
+    const stateBefore = this.plan.getSession(sessionId)?.state;
     // Reap first, then materialise: flowing landed outcomes back marks finished chunks 'done',
     // which is what unblocks their dependents — so the same tick can dispatch the newly-ready
     // ones. (Materialising first would defer each DAG step a whole extra tick.)
-    this.service.recordOutcomes(sessionId);
+    const flowed = this.service.recordOutcomes(sessionId);
     // dispatchReady re-reads the session, so it sees the just-linked branch; it only
     // materialises chunks that are 'planned' with satisfied deps (idempotent across ticks).
-    this.service.dispatchReady(sessionId);
+    const materialised = this.service.dispatchReady(sessionId);
+    const stateAfter = this.plan.getSession(sessionId)?.state;
+
+    return opened || flowed.length > 0 || materialised.length > 0 || stateBefore !== stateAfter;
   }
 }
 

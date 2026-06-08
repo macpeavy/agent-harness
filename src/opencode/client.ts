@@ -22,19 +22,53 @@ export interface AssistantReply {
   serverMs: number;
 }
 
+/** Why a wait aborted (AGENT-38): `idle` — no new activity for the idle window (a hang);
+ *  `absolute` — the runaway backstop tripped even while still producing. */
+export type TimeoutKind = "idle" | "absolute";
+
 /**
- * A model turn exceeded its deadline (a slow build, a hung session). A distinct type so the
- * daemon can route a timeout into the escalation path (parked, chief-visible) instead of a hard
- * fail or an unhandled throw (ADR 0020 robustness).
+ * A model turn aborted on a deadline (a hung session, or a runaway one). A distinct type so the
+ * daemon routes it into the escalation path (parked, chief-visible) instead of a hard fail or an
+ * unhandled throw (ADR 0023 row 3). `kind` distinguishes an idle hang from the absolute backstop.
  */
 export class AgentTimeoutError extends Error {
   constructor(
     readonly sessionId: string,
     readonly timeoutMs: number,
+    readonly kind: TimeoutKind = "absolute",
   ) {
-    super(`agent session ${sessionId} did not reply within ${timeoutMs}ms`);
+    super(
+      kind === "idle"
+        ? `agent session ${sessionId} produced no activity for ${timeoutMs}ms (idle)`
+        : `agent session ${sessionId} exceeded the ${timeoutMs}ms absolute backstop`,
+    );
     this.name = "AgentTimeoutError";
   }
+}
+
+/** A cheap measure of how much a session has produced — message count plus total text length
+ *  across all parts. A change between polls means the agent is still working (resets the idle
+ *  clock); no change means it's stalled. Pure, so the idle logic is testable. */
+export function activitySignature(msgs: { parts?: { text?: string }[] }[]): number {
+  let sig = msgs.length;
+  for (const m of msgs) for (const p of m.parts ?? []) sig += p.text?.length ?? 0;
+  return sig;
+}
+
+/** Whether a poll should abort, and why (AGENT-38 idle detection): `absolute` if the total wait
+ *  exceeded the backstop, `idle` if there's been no activity for the idle window, else null
+ *  (keep waiting). Pure. Activity keeps `lastActivity` fresh, so a slow-but-progressing session
+ *  is never killed on idle — only the absolute backstop can stop it. */
+export function timeoutKind(
+  now: number,
+  start: number,
+  lastActivity: number,
+  idleMs: number,
+  absoluteMs: number,
+): TimeoutKind | null {
+  if (now - start >= absoluteMs) return "absolute";
+  if (now - lastActivity >= idleMs) return "idle";
+  return null;
 }
 
 export class OpencodeClient {
@@ -136,20 +170,26 @@ export class OpencodeClient {
   }
 
   /**
-   * Poll until the session goes idle (its latest assistant message has finished),
-   * then return that reply. This is *external* idle detection — the substrate waits,
-   * not the agent, so no tokens are burned while idle (`/api/.../wait` is not yet
-   * implemented server-side; `/event` SSE is the future cleaner path).
+   * Poll until the session's latest assistant message has finished, then return that reply. This
+   * is *external* waiting — the substrate polls, not the agent, so no tokens burn while it thinks.
+   *
+   * Aborts on IDLE, not a fixed wall-clock (AGENT-38): if the session produces no new activity for
+   * `idleMs` it's a hang → AgentTimeoutError(idle). A generous `absoluteMs` backstop still kills a
+   * runaway session that keeps producing forever. A slow-but-progressing build is NOT killed — its
+   * activity keeps resetting the idle clock. (`/event` SSE is the future cleaner activity source.)
    */
   async waitForReply(
     sessionID: string,
-    opts: { timeoutMs?: number; intervalMs?: number } = {},
+    opts: { idleMs?: number; absoluteMs?: number; intervalMs?: number } = {},
   ): Promise<AssistantReply> {
-    const timeoutMs = opts.timeoutMs ?? 600_000;
+    const idleMs = opts.idleMs ?? 120_000;
+    const absoluteMs = opts.absoluteMs ?? 1_800_000;
     const intervalMs = opts.intervalMs ?? 1500;
-    const deadline = Date.now() + timeoutMs;
+    const start = Date.now();
+    let lastActivity = start;
+    let lastSig = -1;
 
-    while (Date.now() < deadline) {
+    while (true) {
       const msgs = (await this.get(`/session/${sessionID}/message`)) as Array<{
         info?: {
           role?: string;
@@ -161,6 +201,12 @@ export class OpencodeClient {
         };
         parts?: Array<{ type: string; text?: string }>;
       }>;
+      // Any growth in the message stream = the agent is still working → reset the idle clock.
+      const sig = activitySignature(msgs ?? []);
+      if (sig !== lastSig) {
+        lastActivity = Date.now();
+        lastSig = sig;
+      }
       const assistants = (msgs ?? []).filter((m) => m.info?.role === "assistant");
       const last = assistants[assistants.length - 1];
       if (last?.info?.finish) {
@@ -185,9 +231,10 @@ export class OpencodeClient {
           serverMs: created && completed ? completed - created : 0,
         };
       }
+      const kind = timeoutKind(Date.now(), start, lastActivity, idleMs, absoluteMs);
+      if (kind) throw new AgentTimeoutError(sessionID, kind === "idle" ? idleMs : absoluteMs, kind);
       await Bun.sleep(intervalMs);
     }
-    throw new AgentTimeoutError(sessionID, timeoutMs);
   }
 
   /** Sum input/output tokens across every assistant message in a session (the full

@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, parseGhRepo } from "./config";
 
@@ -34,6 +33,7 @@ describe("loadConfig", () => {
     "AH_BUILDER_STRONG_AGENT",
     "AH_REVIEWER_AGENT",
     "AH_AMEND_CAP",
+    "AH_AGENT_IDLE_MS",
     "AH_AGENT_TIMEOUT_MS",
   ] as const;
   let saved: Record<string, string | undefined>;
@@ -56,11 +56,24 @@ describe("loadConfig", () => {
 
     expect(config.repoPath).toBe(process.cwd());
     expect(config.ghRepo).toBe("acme/widgets");
-    expect(config.worktreeRoot).toBe(join(tmpdir(), "ah-worktrees"));
+    // Worktrees default INSIDE the repo (AGENT-38) — under repoPath, not /tmp — so an agent edit
+    // never trips an external_directory permission prompt.
+    expect(config.worktreeRoot).toBe(join(process.cwd(), ".worktrees"));
+    expect(config.worktreeRoot.startsWith(config.repoPath)).toBe(true);
     expect(config.builderAgent).toBe("builder");
     expect(config.builderStrongAgent).toBe("builder-strong");
     expect(config.reviewerAgent).toBe("reviewer");
     expect(config.amendCap).toBe(3);
+    expect(config.agentIdleMs).toBe(120_000); // idle window, not a wall-clock cap
+    expect(config.agentTimeoutMs).toBe(1_800_000); // absolute backstop
+  });
+
+  it("puts worktrees under an overridden repo root (AGENT-38)", async () => {
+    process.env.AH_GH_REPO = "acme/widgets";
+    process.env.AH_REPO = "/srv/myrepo";
+    const config = await loadConfig();
+    expect(config.worktreeRoot).toBe(join("/srv/myrepo", ".worktrees"));
+    expect(config.worktreeRoot.startsWith(config.repoPath)).toBe(true);
   });
 
   it("honors every override", async () => {
@@ -71,6 +84,7 @@ describe("loadConfig", () => {
     process.env.AH_BUILDER_STRONG_AGENT = "builder-strong-alt";
     process.env.AH_REVIEWER_AGENT = "principal";
     process.env.AH_AMEND_CAP = "5";
+    process.env.AH_AGENT_IDLE_MS = "90000";
     process.env.AH_AGENT_TIMEOUT_MS = "900000";
     const config = await loadConfig();
 
@@ -82,6 +96,7 @@ describe("loadConfig", () => {
       builderStrongAgent: "builder-strong-alt",
       reviewerAgent: "principal",
       amendCap: 5,
+      agentIdleMs: 90000,
       agentTimeoutMs: 900000,
     });
   });

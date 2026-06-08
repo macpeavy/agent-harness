@@ -19,7 +19,8 @@ const CONFIG: SubstrateConfig = {
   builderStrongAgent: "builder-strong",
   reviewerAgent: "reviewer",
   amendCap: 3,
-  agentTimeoutMs: 600_000,
+  agentIdleMs: 120_000,
+  agentTimeoutMs: 1_800_000,
 };
 
 const ISSUE: Issue = { id: "ISSUE-1", title: "Add a thing", body: "Do the thing." };
@@ -326,7 +327,7 @@ describe("build timeout (ADR 0020 robustness)", () => {
     // A leg set whose build times out instead of returning.
     const { legs } = fakeLegs();
     legs.build = async () => {
-      throw new AgentTimeoutError("ses_build", 600_000);
+      throw new AgentTimeoutError("ses_build", 120_000, "idle");
     };
 
     const driven = await new DispatchDaemon(repo, CONFIG, legs).runOnce();
@@ -335,7 +336,7 @@ describe("build timeout (ADR 0020 robustness)", () => {
     const d = repo.get("d1");
     expect(d?.state).toBe("escalated"); // parked for the chief, not failed
     expect(d?.escalated).toBe("attended");
-    expect(d?.escalationReason).toContain("did not reply within 600000ms"); // status shows the timeout
+    expect(d?.escalationReason).toContain("no activity for 120000ms"); // the recorded idle reason
   });
 });
 
