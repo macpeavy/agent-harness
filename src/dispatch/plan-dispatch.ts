@@ -176,7 +176,7 @@ export class PlanDispatchService {
 
   /**
    * Meta-decompose a feature into its sessions (ADR 0020 §2, pass 1) — the chief's first
-   * pass: the feature + its ~1k-LOC session boundaries, no chunks yet. Plan-only. Each
+   * pass: the feature + its session boundaries, no chunks yet. Plan-only. Each
    * session is then filled by `decompose` (pass 2). Returns the feature + session ids.
    */
   metaDecompose(input: CreateMetaDecomposition): { featureId: string; sessionIds: string[] } {

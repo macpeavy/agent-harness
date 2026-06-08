@@ -67,7 +67,7 @@ export interface CreateChunk {
 }
 
 /** A feature meta-decomposed into its sessions (ADR 0020 §2, pass 1) — the chief's first
- *  decompose pass: the feature + its ~1k-LOC session boundaries, no chunks yet. */
+ *  decompose pass: the feature + its session boundaries, no chunks yet. */
 export interface CreateMetaDecomposition {
   feature: CreateFeature;
   sessions: { id: string; locEstimate?: number }[];

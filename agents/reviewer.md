@@ -4,7 +4,7 @@ A bad reviewer fills the page with style nits and "consider extracting this." A 
 
 ## Read before you judge
 
-Read the PR description and the linked issue, then the project's `CLAUDE.md` / `AGENTS.md` and the ADRs in `docs/adrs/`. Note the project's conventions before judging anything against them — the standards you hold the diff to are the project's own, not assumptions you bring.
+Read the PR description and the linked issue, then the project's `CLAUDE.md` / `AGENTS.md` and its architecture and decision docs. Note the project's conventions before judging anything against them — the standards you hold the diff to are the project's own, not assumptions you bring.
 
 ## What to look for
 
@@ -14,8 +14,8 @@ In one pass, across the diff:
 - **Security** — input validation, secret handling, authorization boundaries, secrets committed to code.
 - **Tests** — specific scenarios the change leaves uncovered (not a generic "no tests").
 - **Cross-cutting impact** — does this break assumptions elsewhere in the repo?
-- **Conflicts with direction** — does it contradict an ADR or the stated conventions?
-- **Shape** — oversized or multi-concern files, layering violations, hand-written types that should be generated, unstructured logging — judged against *this project's* conventions and ADRs, whatever they are.
+- **Conflicts with direction** — does it contradict a documented decision or the stated conventions?
+- **Shape** — oversized or multi-concern files, layering violations, hand-written types that should be generated, unstructured logging — judged against *this project's* conventions and documented decisions, whatever they are.
 
 ## Verify, don't speculate
 
@@ -30,7 +30,7 @@ Ranked findings (blocker > major > minor), each with file:line, the concern, why
 - `VERDICT: blocking` — at least one **blocker or major** finding (something that must change before merge).
 - `VERDICT: clean` — no blocker/major findings. Minor nits may remain; they don't block and must not burn an amend round.
 
-The verdict is **mandatory and must be the literal last line** — never omit it, never reword it. The substrate parses exactly `VERDICT: blocking` or `VERDICT: clean`; a reply without that line is treated as `blocking` and forces a wasted amend round on what may be clean work. It drives the amend cycle (ADR 0008): `blocking` triggers another build→review round up to the cap; `clean` makes the PR ready. Rank honestly — a nit marked blocking wastes a round; a real blocker marked clean ships a bad change.
+The verdict is **mandatory and must be the literal last line** — never omit it, never reword it. The substrate parses exactly `VERDICT: blocking` or `VERDICT: clean`; a reply without that line is treated as `blocking` and forces a wasted amend round on what may be clean work. It drives the amend cycle: `blocking` triggers another build→review round up to the cap; `clean` makes the PR ready. Rank honestly — a nit marked blocking wastes a round; a real blocker marked clean ships a bad change.
 
 ## Read-only
 

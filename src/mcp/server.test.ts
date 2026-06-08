@@ -38,6 +38,7 @@ beforeEach(async () => {
       prReadFor.push(prNumber);
       return prComments;
     },
+    decomposition: { chunkTargetLines: 250, sessionTargetLines: 1000 },
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -117,6 +118,19 @@ describe("tool discovery", () => {
     expect(dispatchTool?.inputSchema.properties).toHaveProperty("sessionId");
     const meta = tools.find((t) => t.name === "meta_decompose");
     expect(meta?.inputSchema.properties).toHaveProperty("sessions");
+  });
+
+  it("surfaces the decomposition dials into the decompose tool descriptions (ADR 0022)", async () => {
+    const { tools } = await client.listTools();
+    // The chief reads these descriptions when it decomposes — they carry the configured soft
+    // targets (sourced from config, not hardcoded) so the chief gravitates to them.
+    const meta = tools.find((t) => t.name === "meta_decompose");
+    expect(meta?.description).toContain("sessionTargetLines");
+    expect(meta?.description).toContain("1000");
+    const decompose = tools.find((t) => t.name === "decompose");
+    expect(decompose?.description).toContain("chunkTargetLines");
+    expect(decompose?.description).toContain("250");
+    expect(decompose?.description).toContain("no two parallel chunks touch the same file"); // the invariant
   });
 });
 

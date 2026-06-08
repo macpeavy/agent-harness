@@ -1,0 +1,14 @@
+# Decomposition dials (ADR 0022) — the SOFT size targets the chief gravitates to when it
+# decomposes. Leans, not caps: the chief reads them as defaults and uses judgment around them;
+# nothing here gates a build. LOC is a crude proxy, but it's what the instrument measures for
+# free — sweep these against the amend-rate-vs-chief-cost signal to tune chunk/session size.
+#
+# This file holds ONLY empirical dials. The granularity *invariants* (no two parallel chunks
+# touch the same file; a one-liner rides with its consumer; interface-first) are correctness
+# rules the chief judges and live in agents/chief.md — never here. See ADR 0022 for the split.
+
+# Soft size the chief aims a single chunk at (seed; tune by the instrument).
+chunkTargetLines: 250
+
+# Soft size of a session — the reviewable-PR unit (one PR per session, ADR 0020).
+sessionTargetLines: 1000
