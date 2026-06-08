@@ -6,17 +6,18 @@
 
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Decomposed, FeatureStatus, PlanDispatchService } from "../dispatch/plan-dispatch";
-import type { CreateChunk, CreateDecomposition, CreateFeature } from "../substrate/plan";
+import type { CreateChunk, CreateMetaDecomposition } from "../substrate/plan";
+
+/** The `meta_decompose` tool's input — the feature + its ~1k-LOC session boundaries (ADR 0020
+ *  pass 1). No chunks yet; each session is filled by `decompose`. Mirrors CreateMetaDecomposition. */
+export type MetaDecomposeInput = CreateMetaDecomposition;
 
 /**
- * The `decompose` tool's input — the chief gives the feature, the session it's drawing, and
- * each chunk's spec without repeating the sessionId (the handler stamps it). Mirrors
- * CreateDecomposition minus that redundancy. (Slice 1: one session; multi-session
- * meta-decomposition is the chief's job, slice 3.)
+ * The `decompose` tool's input (ADR 0020 pass 2) — a session's chunk-DAG: each chunk's spec
+ * without repeating the sessionId (the handler passes it alongside; the service stamps it).
  */
 export interface DecomposeInput {
-  feature: CreateFeature;
-  session: { id: string; locEstimate?: number };
+  sessionId: string;
   chunks: Omit<CreateChunk, "sessionId">[];
   edges: { from: string; to: string }[];
 }
@@ -55,6 +56,16 @@ export function renderFeatureStatus(s: FeatureStatus): string {
   const lines: string[] = [`Feature ${s.feature.id} "${s.feature.title}" — ${s.feature.state}`];
   if (s.sessions.length === 0) lines.push("Sessions: none");
 
+  // The completion signal (ADR 0020): surface sessions that FINISHED or ESCALATED up top, so
+  // the chief sees them on its next look without scanning — pull, but prominent.
+  const attention: string[] = [];
+  for (const sess of s.sessions) {
+    if (sess.session.state === "done") attention.push(`${sess.session.id} finished — review/merge its PR`);
+    else if (sess.escalations.length > 0)
+      attention.push(`${sess.session.id} has ${sess.escalations.length} escalation(s) to route`);
+  }
+  if (attention.length > 0) lines.push(`NEEDS ATTENTION: ${attention.join("; ")}`);
+
   for (const sess of s.sessions) {
     const pr = sess.session.prNumber ? ` PR #${sess.session.prNumber}` : "";
     const loc = sess.session.locEstimate ? ` ~${sess.session.locEstimate} LOC` : "";
@@ -78,6 +89,17 @@ export function renderFeatureStatus(s: FeatureStatus): string {
   return lines.join("\n");
 }
 
+/** `meta_decompose` — write a feature + its session boundaries to the plan (pass 1). */
+export function runMetaDecompose(service: PlanDispatchService, input: MetaDecomposeInput): CallToolResult {
+  return guard(() => {
+    const { featureId, sessionIds } = service.metaDecompose(input);
+    return text(
+      `Meta-decomposed feature ${featureId} into ${sessionIds.length} session(s): ${sessionIds.join(", ")}.\n` +
+        `Now decompose each session (decompose) into its chunk-DAG; then present the plan and ask the owner to proceed.`,
+    );
+  });
+}
+
 /** Render the result of a decompose call. */
 export function renderDecomposed(d: Decomposed): string {
   return (
@@ -88,17 +110,9 @@ export function renderDecomposed(d: Decomposed): string {
   );
 }
 
-/** `decompose` — write a feature + session + chunk-DAG to the plan (validated; plan-only). */
+/** `decompose` — write a session's chunk-DAG to the plan (pass 2; validated; plan-only). */
 export function runDecompose(service: PlanDispatchService, input: DecomposeInput): CallToolResult {
-  return guard(() => {
-    const decomposition: CreateDecomposition = {
-      feature: input.feature,
-      session: input.session,
-      chunks: input.chunks.map((c) => ({ ...c, sessionId: input.session.id })),
-      edges: input.edges,
-    };
-    return text(renderDecomposed(service.decompose(decomposition)));
-  });
+  return guard(() => text(renderDecomposed(service.decompose(input))));
 }
 
 /** `status` — a read-only digest of a feature's sessions + their dispatch progress. */

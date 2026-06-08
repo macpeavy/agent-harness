@@ -3,7 +3,7 @@
 // data access) stays behind this barrel.
 
 export { PlanRepository } from "./repository";
-export type { CreateFeature, CreateSession, CreateChunk, CreateDecomposition, SessionLinks } from "./repository";
+export type { CreateFeature, CreateSession, CreateChunk, CreateMetaDecomposition, SessionLinks } from "./repository";
 
 export {
   FEATURE_STATES,

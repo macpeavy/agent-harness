@@ -41,9 +41,11 @@ function chunk(id: string, over: Partial<CreateChunk> = {}): CreateChunk {
   };
 }
 
-// Decompose a feature with one session (S1) and the given chunks/edges, via the service.
+// Meta-decompose a feature into one session (S1), then decompose that session — the two-level
+// flow (ADR 0020), via the service.
 function decompose(chunks: CreateChunk[], edges: { from: string; to: string }[] = []): void {
-  service.decompose({ feature: FEATURE, session: { id: "S1" }, chunks, edges });
+  service.metaDecompose({ feature: FEATURE, sessions: [{ id: "S1" }] });
+  service.decompose({ sessionId: "S1", chunks, edges });
 }
 
 // Drive a dispatch to a terminal/parked state the way the daemon would.
@@ -83,29 +85,31 @@ describe("outcomeFor", () => {
   });
 });
 
-describe("decompose", () => {
-  it("writes a feature + session + chunk-DAG and returns a summary", () => {
-    const result = service.decompose({
-      feature: FEATURE,
-      session: { id: "S1", locEstimate: 900 },
-      chunks: [chunk("a"), chunk("b")],
-      edges: [{ from: "a", to: "b" }],
-    });
+describe("metaDecompose + decompose (two-level, ADR 0020)", () => {
+  it("meta-decomposes into sessions, then decomposes a session and returns a summary", () => {
+    const meta = service.metaDecompose({ feature: FEATURE, sessions: [{ id: "S1", locEstimate: 900 }, { id: "S2" }] });
+    expect(meta).toEqual({ featureId: "F1", sessionIds: ["S1", "S2"] });
+    expect(plan.getSession("S1")?.locEstimate).toBe(900);
+
+    const result = service.decompose({ sessionId: "S1", chunks: [chunk("a"), chunk("b")], edges: [{ from: "a", to: "b" }] });
     expect(result).toEqual({ featureId: "F1", sessionId: "S1", chunkIds: ["a", "b"], edgeCount: 1 });
-    expect(plan.getSession("S1")?.state).toBe("planning");
     expect(plan.readyChunks("S1").map((c) => c.id)).toEqual(["a"]);
   });
 
   it("rejects a cyclic DAG before writing anything", () => {
+    service.metaDecompose({ feature: FEATURE, sessions: [{ id: "S1" }] });
     expect(() =>
       service.decompose({
-        feature: FEATURE,
-        session: { id: "S1" },
+        sessionId: "S1",
         chunks: [chunk("a"), chunk("b")],
         edges: [{ from: "a", to: "b" }, { from: "b", to: "a" }],
       }),
     ).toThrow("invalid chunk-DAG");
-    expect(plan.getFeature("F1")).toBeNull();
+    expect(plan.listChunks("S1")).toEqual([]); // nothing written
+  });
+
+  it("decompose throws for an unknown session", () => {
+    expect(() => service.decompose({ sessionId: "ghost", chunks: [chunk("a")], edges: [] })).toThrow("no session");
   });
 });
 

@@ -85,36 +85,47 @@ function escalate(chunkId: string): void {
 describe("tool discovery", () => {
   it("exposes the full chief toolset", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["decompose", "dispatch", "promote", "redecompose", "status"]);
+    expect(tools.map((t) => t.name).sort()).toEqual([
+      "decompose",
+      "dispatch",
+      "meta_decompose",
+      "promote",
+      "redecompose",
+      "status",
+    ]);
     const dispatchTool = tools.find((t) => t.name === "dispatch");
     expect(dispatchTool?.inputSchema.properties).toHaveProperty("sessionId");
-    const decompose = tools.find((t) => t.name === "decompose");
-    expect(decompose?.inputSchema.properties).toHaveProperty("session");
+    const meta = tools.find((t) => t.name === "meta_decompose");
+    expect(meta?.inputSchema.properties).toHaveProperty("sessions");
   });
 });
 
-describe("decompose", () => {
-  const DECOMP = {
-    feature: FEATURE,
-    session: { id: "S1", locEstimate: 800 },
-    chunks: [
-      { id: "a", surface: "src/a.ts", intent: "do a", contract: "export function a(): void", acceptance: "a.test.ts" },
-      { id: "b", surface: "src/b.ts", intent: "do b", contract: "export function b(): void", acceptance: "b.test.ts" },
-    ],
-    edges: [{ from: "a", to: "b" }],
-  };
+describe("meta_decompose + decompose (two-level, ADR 0020)", () => {
+  const CHUNKS = [
+    { id: "a", surface: "src/a.ts", intent: "do a", contract: "export function a(): void", acceptance: "a.test.ts" },
+    { id: "b", surface: "src/b.ts", intent: "do b", contract: "export function b(): void", acceptance: "b.test.ts" },
+  ];
 
-  it("writes the feature + session + chunk-DAG to the plan", async () => {
-    const body = await callText("decompose", DECOMP);
+  it("meta-decomposes into sessions, then decomposes a session's DAG", async () => {
+    const meta = await callText("meta_decompose", { feature: FEATURE, sessions: [{ id: "S1", locEstimate: 800 }, { id: "S2" }] });
+    expect(meta).toContain("Meta-decomposed feature F1 into 2 session(s): S1, S2");
+    expect(plan.listSessions("F1").map((s) => s.id)).toEqual(["S1", "S2"]);
+
+    const body = await callText("decompose", { sessionId: "S1", chunks: CHUNKS, edges: [{ from: "a", to: "b" }] });
     expect(body).toContain("Decomposed feature F1 / session S1 into 2 chunk(s) (1 edge(s)): a, b");
     expect(plan.listChunks("S1").map((c) => c.id)).toEqual(["a", "b"]);
-    expect(plan.getChunk("a")?.sessionId).toBe("S1"); // sessionId stamped from the session
+    expect(plan.getChunk("a")?.sessionId).toBe("S1"); // sessionId stamped
   });
 
-  it("returns a tool error for a cyclic DAG (and writes nothing)", async () => {
-    const cyclic = { ...DECOMP, edges: [{ from: "a", to: "b" }, { from: "b", to: "a" }] };
+  it("decompose returns a tool error for a cyclic DAG (and writes nothing)", async () => {
+    await callText("meta_decompose", { feature: FEATURE, sessions: [{ id: "S1" }] });
+    const cyclic = { sessionId: "S1", chunks: CHUNKS, edges: [{ from: "a", to: "b" }, { from: "b", to: "a" }] };
     expect(await isError("decompose", cyclic)).toBe(true);
-    expect(plan.getFeature("F1")).toBeNull();
+    expect(plan.listChunks("S1")).toEqual([]);
+  });
+
+  it("decompose returns a tool error for an unknown session", async () => {
+    expect(await isError("decompose", { sessionId: "ghost", chunks: CHUNKS, edges: [] })).toBe(true);
   });
 });
 
@@ -215,7 +226,14 @@ describe("stdio smoke-boot", () => {
     try {
       await smokeClient.connect(transport);
       const { tools } = await smokeClient.listTools();
-      expect(tools.map((t) => t.name).sort()).toEqual(["decompose", "dispatch", "promote", "redecompose", "status"]);
+      expect(tools.map((t) => t.name).sort()).toEqual([
+        "decompose",
+        "dispatch",
+        "meta_decompose",
+        "promote",
+        "redecompose",
+        "status",
+      ]);
     } finally {
       await smokeClient.close();
       rmSync(smokeDir, { recursive: true, force: true });

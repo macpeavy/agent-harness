@@ -11,7 +11,7 @@ import { z } from "zod";
 import { PlanRepository } from "../substrate/plan";
 import { DispatchRepository } from "../substrate/dispatch";
 import { PlanDispatchService } from "../dispatch/plan-dispatch";
-import { runStatus, runDispatch, runDecompose, runPromote, runRedecompose } from "./tools";
+import { runStatus, runDispatch, runDecompose, runMetaDecompose, runPromote, runRedecompose } from "./tools";
 
 // The chunk spec the chief authors per chunk (ADR 0014). The parent sessionId is omitted —
 // the handler stamps it from the session, so the chief doesn't repeat it per chunk.
@@ -35,15 +35,14 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
   const server = new McpServer({ name: "substrate", version: "0.1.0" });
 
   server.registerTool(
-    "decompose",
+    "meta_decompose",
     {
-      title: "Decompose a feature",
+      title: "Meta-decompose a feature into sessions",
       description:
-        "Write a feature + a session + that session's chunk-DAG to the plan (ADR 0020): the " +
-        "feature, the session (a ~1k-LOC reviewable unit — it gets one PR later), its chunks " +
-        "(each a full ADR 0014 spec), and the dependency edges (`to` depends on `from`). " +
-        "Validated for cycles/unknown refs. Plan-only — nothing dispatches until the owner " +
-        "approves. (One session per call; a large feature is decomposed session by session.)",
+        "Pass 1 of two-level decomposition (ADR 0020): write the feature + its ~1k-LOC SESSION " +
+        "boundaries to the plan — no chunks yet. Each session is a reviewable unit that gets " +
+        "one session-main PR. A small feature is one session; a large one is several. Then " +
+        "decompose each session (the `decompose` tool) into its chunk-DAG.",
       inputSchema: {
         feature: z
           .object({
@@ -52,12 +51,30 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
             description: z.string().describe("the owner's intent"),
           })
           .describe("the feature being decomposed"),
-        session: z
-          .object({
-            id: z.string().describe("unique session id (becomes the session-main branch id)"),
-            locEstimate: z.number().optional().describe("the chief's ~1k-LOC target for this session"),
-          })
-          .describe("the session this chunk-DAG belongs to"),
+        sessions: z
+          .array(
+            z.object({
+              id: z.string().describe("unique session id (becomes the session-main branch id)"),
+              locEstimate: z.number().optional().describe("the chief's ~1k-LOC target for this session"),
+            }),
+          )
+          .describe("the session boundaries (one for a small feature, several for a large one)"),
+      },
+    },
+    async (input) => runMetaDecompose(service, input),
+  );
+
+  server.registerTool(
+    "decompose",
+    {
+      title: "Decompose a session into its chunk-DAG",
+      description:
+        "Pass 2 of two-level decomposition (ADR 0020): write a session's chunks (each a full " +
+        "ADR 0014 spec) + dependency edges (`to` depends on `from`) to the plan. The session " +
+        "must already exist (from meta_decompose). Validated for cycles/unknown refs. " +
+        "Plan-only — nothing dispatches until the owner approves.",
+      inputSchema: {
+        sessionId: z.string().describe("the session to decompose (from meta_decompose)"),
         chunks: z.array(chunkSpec).describe("the chunks of this session"),
         edges: z
           .array(z.object({ from: z.string(), to: z.string() }))

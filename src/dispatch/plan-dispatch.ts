@@ -30,7 +30,7 @@ import {
   type ChunkOutcome,
   type ChunkState,
   type CreateChunk,
-  type CreateDecomposition,
+  type CreateMetaDecomposition,
   type DagEdge,
   type FeatureState,
   type SessionState,
@@ -131,24 +131,37 @@ export class PlanDispatchService {
   ) {}
 
   /**
-   * Write a feature + one session + that session's chunk-DAG to the plan (the chief's
-   * `decompose`, ADR 0019/0020): the feature, the session, its chunks (each a full ADR 0014
-   * spec), and the dependency edges — in one transaction, so a feature never half-lands. The
-   * DAG is validated up front (unknown refs, self-edges, cycles → a clear error before any
-   * write). Plan-only; nothing dispatches until the owner approves and `dispatchReady` runs.
-   * (Multi-session meta-decomposition is the chief's job, slice 3 — slice 1 is one session.)
+   * Meta-decompose a feature into its sessions (ADR 0020 §2, pass 1) — the chief's first
+   * pass: the feature + its ~1k-LOC session boundaries, no chunks yet. Plan-only. Each
+   * session is then filled by `decompose` (pass 2). Returns the feature + session ids.
    */
-  decompose(input: CreateDecomposition): Decomposed {
+  metaDecompose(input: CreateMetaDecomposition): { featureId: string; sessionIds: string[] } {
+    this.plan.createMetaDecomposition(input);
+    return { featureId: input.feature.id, sessionIds: input.sessions.map((s) => s.id) };
+  }
+
+  /**
+   * Decompose a session into its chunk-DAG (ADR 0020 §2, pass 2) — add the chunks (each a full
+   * ADR 0014 spec) + dependency edges to an existing session, in one transaction. The DAG is
+   * validated up front (unknown refs, self-edges, cycles → a clear error before any write).
+   * Planning-amendable: allowed while the feature is in `planning`. Nothing dispatches until
+   * the owner approves and the session loop launches it.
+   */
+  decompose(input: { sessionId: string; chunks: Omit<CreateChunk, "sessionId">[]; edges: DagEdge[] }): Decomposed {
+    const session = this.plan.getSession(input.sessionId);
+    if (!session) throw new Error(`no session ${input.sessionId}`);
+
     const violation = validateDag(
       input.chunks.map((c) => c.id),
       input.edges,
     );
     if (violation) throw new Error(`invalid chunk-DAG: ${violation}`);
 
-    this.plan.createDecomposition(input);
+    const stamped = input.chunks.map((c) => ({ ...c, sessionId: input.sessionId }));
+    this.plan.addChunkDag(input.sessionId, stamped, input.edges);
     return {
-      featureId: input.feature.id,
-      sessionId: input.session.id,
+      featureId: session.featureId,
+      sessionId: input.sessionId,
       chunkIds: input.chunks.map((c) => c.id),
       edgeCount: input.edges.length,
     };
