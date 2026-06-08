@@ -247,6 +247,8 @@ export { dispatchBranch };
 
 if (import.meta.main) {
   const config = await loadConfig();
-  const daemon = new DispatchDaemon(new DispatchRepository(), config);
+  // migrate: false — `make up` co-launches this with the session-loop, so migration runs once
+  // up front (`make migrate`); migrating here too would race the other process (ADR 0016).
+  const daemon = new DispatchDaemon(new DispatchRepository(undefined, { migrate: false }), config);
   await daemon.run();
 }

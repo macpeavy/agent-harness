@@ -16,8 +16,9 @@
 #   make chief        → the opencode TUI with the chief agent selected
 #
 # Dev:
-#   make check → typecheck + test (run before every commit)
-#   make db    → regenerate Drizzle migrations from the schema
+#   make check   → typecheck + test (run before every commit)
+#   make migrate → apply the substrate DB migrations once (up runs this before the panes)
+#   make db      → regenerate Drizzle migrations from the schema
 #
 # Prereqs: tmux, bun, opencode, the litellm .venv (config/README.md), and .env (.env.example).
 
@@ -41,9 +42,9 @@ LOADENV := set -a; source .env; set +a;
 # proportionally on attach, ballooning the strip. tput reads the terminal `make up` runs in.
 SIZE := -x $$(tput cols 2>/dev/null || echo 200) -y $$(tput lines 2>/dev/null || echo 50)
 
-.PHONY: up down gateway daemon session-loop chief check db
+.PHONY: up down gateway daemon session-loop chief check migrate db
 
-up:
+up: migrate
 	@if tmux has-session -t $(SESSION) 2>/dev/null; then \
 		echo "session '$(SESSION)' already up — attaching"; \
 	elif [ "$(LOGS_HEIGHT)" -eq 0 ]; then \
@@ -74,6 +75,12 @@ session-loop:
 
 chief:
 	bash -c '$(LOADENV) exec opencode --agent chief'
+
+# Apply the substrate DB migrations once, before the long-running panes open the db. `up`
+# depends on this so the daemon + session-loop (which open the db with migrate-on-construct
+# OFF) never race each other migrating the same SQLite file (ADR 0016 refinement).
+migrate:
+	bash -c '$(LOADENV) bun run migrate'
 
 check:
 	bun run typecheck

@@ -12,6 +12,7 @@
     "fanout": "bun run src/fanout-stress.ts",
     "daemon": "bun run src/dispatch/daemon.ts",
     "session-loop": "bun run src/dispatch/session-loop.ts",
+    "migrate": "bun run src/substrate/migrate.ts",
     "reap": "bun run src/cli/reap.ts",
     "substrate": "bun run src/index.ts",
     "db:generate": "drizzle-kit generate"
