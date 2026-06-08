@@ -11,7 +11,18 @@ import { z } from "zod";
 import { PlanRepository } from "../substrate/plan";
 import { DispatchRepository } from "../substrate/dispatch";
 import { PlanDispatchService } from "../dispatch/plan-dispatch";
-import { runStatus, runDispatch, runDecompose, runMetaDecompose, runPromote, runRedecompose } from "./tools";
+import {
+  runStatus,
+  runDispatch,
+  runDecompose,
+  runMetaDecompose,
+  runPromote,
+  runRedecompose,
+  runReviseChunk,
+  runRemoveChunk,
+  runRemoveSession,
+  runRemoveEdge,
+} from "./tools";
 
 // The chunk spec the chief authors per chunk (ADR 0014). The parent sessionId is omitted —
 // the handler stamps it from the session, so the chief doesn't repeat it per chunk.
@@ -82,6 +93,67 @@ export function createSubstrateServer(service: PlanDispatchService): McpServer {
       },
     },
     async (input) => runDecompose(service, input),
+  );
+
+  // --- planning-amendable: revise + prune (ADR 0020 §5b) — edit the plan before approval ---
+
+  server.registerTool(
+    "revise_chunk",
+    {
+      title: "Revise a planned chunk",
+      description:
+        "Re-spec a planned chunk before approval (ADR 0020) — change only the fields you pass " +
+        "(e.g. just the contract). Allowed while the feature is in planning; frozen once approved.",
+      inputSchema: {
+        chunkId: z.string().describe("the chunk to revise"),
+        surface: z.string().optional().describe("the one file this chunk produces"),
+        intent: z.string().optional().describe("one sentence: what this chunk is for"),
+        contract: z.string().optional().describe("the exact signatures/types/exports it must produce"),
+        acceptance: z.string().optional().describe("acceptance criteria, including a test file"),
+        dataShapes: z.string().optional().describe("data shapes the chunk works with"),
+        preResolved: z.string().optional().describe("design decisions pre-resolved to avoid amends"),
+        outOfScope: z.string().optional().describe("what this chunk must NOT do"),
+        tierHint: z.enum(["cheap", "strong"]).optional().describe("build tier"),
+      },
+    },
+    async (input) => runReviseChunk(service, input),
+  );
+
+  server.registerTool(
+    "remove_chunk",
+    {
+      title: "Remove a planned chunk",
+      description:
+        "Drop a planned chunk (and any edges touching it) before approval (ADR 0020). Allowed " +
+        "while the feature is in planning.",
+      inputSchema: { chunkId: z.string().describe("the chunk to remove") },
+    },
+    async ({ chunkId }) => runRemoveChunk(service, chunkId),
+  );
+
+  server.registerTool(
+    "remove_session",
+    {
+      title: "Remove a session",
+      description:
+        "Drop a session and its whole sub-plan (its chunks + edges) before approval (ADR 0020). " +
+        "Allowed while the feature is in planning.",
+      inputSchema: { sessionId: z.string().describe("the session to remove") },
+    },
+    async ({ sessionId }) => runRemoveSession(service, sessionId),
+  );
+
+  server.registerTool(
+    "remove_edge",
+    {
+      title: "Remove a dependency edge",
+      description: "Drop one dependency edge (`from`→`to`) before approval (ADR 0020). Allowed while planning.",
+      inputSchema: {
+        from: z.string().describe("the precursor chunk id"),
+        to: z.string().describe("the dependent chunk id"),
+      },
+    },
+    async ({ from, to }) => runRemoveEdge(service, from, to),
   );
 
   server.registerTool(

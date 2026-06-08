@@ -91,6 +91,10 @@ describe("tool discovery", () => {
       "meta_decompose",
       "promote",
       "redecompose",
+      "remove_chunk",
+      "remove_edge",
+      "remove_session",
+      "revise_chunk",
       "status",
     ]);
     const dispatchTool = tools.find((t) => t.name === "dispatch");
@@ -212,6 +216,31 @@ describe("redecompose", () => {
   });
 });
 
+describe("revise + prune before approval (ADR 0020 §5b)", () => {
+  it("revises a chunk and prunes a session while the feature is planning", async () => {
+    seedFeatureSession();
+    plan.createSession({ id: "S2", featureId: "F1" });
+    plan.addChunk(chunk("a"));
+
+    const revised = await callText("revise_chunk", { chunkId: "a", contract: "export function a(n: number): void" });
+    expect(revised).toContain("Revised chunk a");
+    expect(plan.getChunk("a")?.contract).toBe("export function a(n: number): void");
+
+    const removed = await callText("remove_session", { sessionId: "S2" });
+    expect(removed).toContain("Removed session S2");
+    expect(plan.getSession("S2")).toBeNull();
+  });
+
+  it("returns a tool error once the feature is approved (frozen)", async () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    plan.transitionFeature("F1", "ready"); // approved
+
+    expect(await isError("revise_chunk", { chunkId: "a", contract: "x" })).toBe(true);
+    expect(await isError("remove_chunk", { chunkId: "a" })).toBe(true);
+  });
+});
+
 // The launch path is the real risk for an MCP server (a tool can unit-test green yet not
 // appear over the actual stdio boot OpenCode uses). Spawn the real subprocess the way
 // opencode.json does and confirm the tool list — pointing it at a temp db via SUBSTRATE_DB.
@@ -232,6 +261,10 @@ describe("stdio smoke-boot", () => {
         "meta_decompose",
         "promote",
         "redecompose",
+        "remove_chunk",
+        "remove_edge",
+        "remove_session",
+        "revise_chunk",
         "status",
       ]);
     } finally {

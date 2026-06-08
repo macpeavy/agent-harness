@@ -259,3 +259,70 @@ describe("the dispatch seam (service binds the two repos)", () => {
     expect(plan.getChunk("a")?.state).toBe("planned"); // rolled back
   });
 });
+
+describe("planning-amendable: revise + prune (ADR 0020 §5b)", () => {
+  it("revises a planned chunk's spec (only the given fields)", () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    plan.reviseChunk("a", { contract: "export function a(x: number): void", tierHint: "strong" });
+    const c = plan.getChunk("a");
+    expect(c?.contract).toBe("export function a(x: number): void");
+    expect(c?.tierHint).toBe("strong");
+    expect(c?.surface).toBe("src/a.ts"); // untouched
+  });
+
+  it("removes a planned chunk and the edges touching it", () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    plan.addChunk(chunk("b"));
+    plan.addEdge("S1", "a", "b");
+    plan.removeChunk("a");
+    expect(plan.getChunk("a")).toBeNull();
+    expect(plan.listEdges("S1")).toEqual([]); // a→b gone with a
+    expect(plan.getChunk("b")).not.toBeNull(); // b stays
+  });
+
+  it("removes a session and its whole sub-plan", () => {
+    plan.createFeature(FEATURE);
+    plan.createSession({ id: "S1", featureId: "F1" });
+    plan.createSession({ id: "S2", featureId: "F1" });
+    plan.addChunk(chunk("a", { sessionId: "S1" }));
+    plan.addChunk(chunk("b", { sessionId: "S1" }));
+    plan.addEdge("S1", "a", "b");
+    plan.removeSession("S1");
+    expect(plan.getSession("S1")).toBeNull();
+    expect(plan.listChunks("S1")).toEqual([]);
+    expect(plan.listEdges("S1")).toEqual([]);
+    expect(plan.getSession("S2")).not.toBeNull(); // sibling untouched
+  });
+
+  it("removes a single edge", () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    plan.addChunk(chunk("b"));
+    plan.addEdge("S1", "a", "b");
+    plan.removeEdge("a", "b");
+    expect(plan.listEdges("S1")).toEqual([]);
+    expect(plan.getChunk("a")).not.toBeNull(); // chunks stay; only the edge went
+  });
+
+  it("freezes revise + prune once the feature leaves planning", () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    plan.addChunk(chunk("b"));
+    plan.addEdge("S1", "a", "b");
+    plan.transitionFeature("F1", "ready"); // approved
+
+    expect(() => plan.reviseChunk("a", { contract: "x" })).toThrow("not amendable");
+    expect(() => plan.removeChunk("a")).toThrow("not amendable");
+    expect(() => plan.removeSession("S1")).toThrow("not amendable");
+    expect(() => plan.removeEdge("a", "b")).toThrow("not amendable");
+  });
+
+  it("throws for unknown targets", () => {
+    seedFeatureSession();
+    expect(() => plan.reviseChunk("ghost", { contract: "x" })).toThrow("no chunk ghost");
+    expect(() => plan.removeSession("ghost")).toThrow("no session ghost");
+    expect(() => plan.removeEdge("x", "y")).toThrow("no edge x->y");
+  });
+});

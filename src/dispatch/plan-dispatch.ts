@@ -32,6 +32,7 @@ import {
   type CreateChunk,
   type CreateMetaDecomposition,
   type DagEdge,
+  type ReviseChunk,
   type FeatureState,
   type SessionState,
 } from "../substrate/plan";
@@ -165,6 +166,27 @@ export class PlanDispatchService {
       chunkIds: input.chunks.map((c) => c.id),
       edgeCount: input.edges.length,
     };
+  }
+
+  /**
+   * Revise + prune the plan before approval (ADR 0020 §5b) — the chief iterates with the
+   * owner while the feature is in `planning`. All four delegate to the plan repo, which gates
+   * each on the parent feature being `planning` (a built/approved plan can't be edited).
+   */
+  reviseChunk(chunkId: string, spec: ReviseChunk): void {
+    this.plan.reviseChunk(chunkId, spec);
+  }
+
+  removeChunk(chunkId: string): void {
+    this.plan.removeChunk(chunkId);
+  }
+
+  removeSession(sessionId: string): void {
+    this.plan.removeSession(sessionId);
+  }
+
+  removeEdge(fromChunkId: string, toChunkId: string): void {
+    this.plan.removeEdge(fromChunkId, toChunkId);
   }
 
   /**

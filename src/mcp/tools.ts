@@ -6,7 +6,7 @@
 
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Decomposed, FeatureStatus, PlanDispatchService } from "../dispatch/plan-dispatch";
-import type { CreateChunk, CreateMetaDecomposition } from "../substrate/plan";
+import type { CreateChunk, CreateMetaDecomposition, ReviseChunk } from "../substrate/plan";
 
 /** The `meta_decompose` tool's input — the feature + its ~1k-LOC session boundaries (ADR 0020
  *  pass 1). No chunks yet; each session is filled by `decompose`. Mirrors CreateMetaDecomposition. */
@@ -113,6 +113,39 @@ export function renderDecomposed(d: Decomposed): string {
 /** `decompose` — write a session's chunk-DAG to the plan (pass 2; validated; plan-only). */
 export function runDecompose(service: PlanDispatchService, input: DecomposeInput): CallToolResult {
   return guard(() => text(renderDecomposed(service.decompose(input))));
+}
+
+/** `revise_chunk` — re-spec a planned chunk before approval (ADR 0020 §5b). */
+export function runReviseChunk(service: PlanDispatchService, input: { chunkId: string } & ReviseChunk): CallToolResult {
+  return guard(() => {
+    const { chunkId, ...spec } = input;
+    service.reviseChunk(chunkId, spec);
+    return text(`Revised chunk ${chunkId} (${Object.keys(spec).join(", ") || "no fields"}).`);
+  });
+}
+
+/** `remove_chunk` — drop a planned chunk (and its edges) before approval. */
+export function runRemoveChunk(service: PlanDispatchService, chunkId: string): CallToolResult {
+  return guard(() => {
+    service.removeChunk(chunkId);
+    return text(`Removed chunk ${chunkId} (and any edges touching it).`);
+  });
+}
+
+/** `remove_session` — drop a session and its whole sub-plan before approval. */
+export function runRemoveSession(service: PlanDispatchService, sessionId: string): CallToolResult {
+  return guard(() => {
+    service.removeSession(sessionId);
+    return text(`Removed session ${sessionId} (and its chunks + edges).`);
+  });
+}
+
+/** `remove_edge` — drop one dependency edge before approval. */
+export function runRemoveEdge(service: PlanDispatchService, fromChunkId: string, toChunkId: string): CallToolResult {
+  return guard(() => {
+    service.removeEdge(fromChunkId, toChunkId);
+    return text(`Removed edge ${fromChunkId} → ${toChunkId}.`);
+  });
 }
 
 /** `status` — a read-only digest of a feature's sessions + their dispatch progress. */
