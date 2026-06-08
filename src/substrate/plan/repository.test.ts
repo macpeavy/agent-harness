@@ -164,6 +164,20 @@ describe("planning-amendable (ADR 0020)", () => {
   });
 });
 
+describe("features: listAllFeatures", () => {
+  it("returns [] when no features exist", () => {
+    expect(plan.listAllFeatures()).toEqual([]);
+  });
+
+  it("returns inserted features in insertion order after createMetaDecomposition", () => {
+    plan.createMetaDecomposition({ feature: { id: "F2", title: "Second feature", description: "second" }, sessions: [] });
+    plan.createMetaDecomposition({ feature: { id: "F1", title: "First feature", description: "first" }, sessions: [] });
+
+    const features = plan.listAllFeatures();
+    expect(features.map((f) => f.id)).toEqual(["F2", "F1"]);
+  });
+});
+
 describe("createMetaDecomposition + addChunkDag (two-level, ADR 0020)", () => {
   it("meta-decomposes a feature into sessions, then fills a session's DAG", () => {
     plan.createMetaDecomposition({ feature: FEATURE, sessions: [{ id: "S1", locEstimate: 800 }, { id: "S2" }] });

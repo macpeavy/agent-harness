@@ -200,6 +200,12 @@ export class PlanRepository {
     return this.db.select().from(features).where(eq(features.id, id)).get() ?? null;
   }
 
+  /** Every feature across all features, oldest first — what the status CLI sweeps to render the
+   *  fleet view. */
+  listAllFeatures(): Feature[] {
+    return this.db.select().from(features).orderBy(asc(features.createdAt)).all();
+  }
+
   /** Move a feature to a new state, validated against the feature graph. */
   transitionFeature(id: string, to: FeatureState): void {
     this.db.transaction((tx) => {
