@@ -377,3 +377,69 @@ describe("the amend cycle", () => {
     expect(rec.review).toHaveLength(1);
   });
 });
+
+// ADR 0020 slice 4b: the owner reviews the session PR; reopenForReview parks the owner's
+// findings on the (done) dispatch and moves it to amending. The daemon amends against them
+// (NOT against a fresh review), then the normal review cycle re-reviews + re-merges.
+describe("owner-review reopen", () => {
+  // A dispatch that built, reviewed clean, and merged into session-main — at rest in `done`.
+  function seedDone(id: string): void {
+    repo.create({
+      id,
+      issueId: ISSUE.id,
+      title: ISSUE.title,
+      branch: dispatchBranch(ISSUE),
+      spec: ISSUE.body,
+      sessionBranch: "session-main-S1",
+    });
+    repo.transition(id, "building");
+    repo.transition(id, "review");
+    repo.transition(id, "done");
+  }
+
+  it("does not drive a done dispatch at rest (no pending findings) — the daemon sleeps", async () => {
+    seedDone("d1");
+    const { legs, rec } = fakeLegs();
+
+    const driven = await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    expect(driven).toBe(0); // parked like escalated — skipped, not counted
+    expect(repo.get("d1")?.state).toBe("done");
+    expect(rec.amend).toHaveLength(0);
+  });
+
+  it("amends against the owner's findings, then re-reviews + re-merges into session-main", async () => {
+    seedDone("d1");
+    repo.reopenForReview("d1", "the owner's note: rename foo to bar");
+    expect(repo.get("d1")?.state).toBe("amending");
+    const { legs, rec } = fakeLegs({ reviewVerdicts: ["clean"] });
+
+    const driven = await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    expect(driven).toBe(1);
+    const d = repo.get("d1");
+    expect(d?.state).toBe("done"); // back to rest after the fix re-merged
+    expect(d?.pendingFindings).toBeNull(); // consumed
+    expect(d?.amendRounds).toBe(1);
+    expect(rec.amend).toHaveLength(1);
+    expect(rec.amend[0]?.findings).toBe("the owner's note: rename foo to bar"); // owner notes, not a review
+    expect(rec.build).toHaveLength(0); // reopen amends, never rebuilds
+    expect(rec.review).toHaveLength(1); // re-review of the fix
+    expect(rec.merge).toHaveLength(1); // fix re-merged into session-main
+  });
+
+  it("escalates 'attended' when the builder can't action the owner's note", async () => {
+    seedDone("d1");
+    repo.reopenForReview("d1", "please rethink the whole approach");
+    const { legs, rec } = fakeLegs({ amendChanges: false });
+
+    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+
+    const d = repo.get("d1");
+    expect(d?.state).toBe("escalated");
+    expect(d?.escalated).toBe("attended"); // owner asked; cheap builder couldn't — needs the chief/owner
+    expect(d?.pendingFindings).toBeNull();
+    expect(rec.review).toHaveLength(0); // nothing changed — no wasted re-review
+    expect(rec.merge).toHaveLength(0);
+  });
+});

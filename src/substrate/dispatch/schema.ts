@@ -38,6 +38,12 @@ export const dispatches = sqliteTable("dispatches", {
   // without importing the plan. Null = legacy build-off-main (pre-session-main).
   sessionBranch: text("session_branch"),
   state: text("state", { enum: DISPATCH_STATES }).notNull().default("queued"),
+  // Findings to amend against on the NEXT amend round, persisted so they cross the process
+  // boundary (ADR 0020 slice 4b): the chief's MCP server reopens a done dispatch with the
+  // owner's PR-review notes here, and the separate daemon process consumes them. Null in the
+  // normal reviewer-driven cycle (those findings pass in-memory within the daemon). Set when
+  // a done dispatch is reopened by owner review; cleared once the daemon amends against them.
+  pendingFindings: text("pending_findings"),
   // Linked OpenCode session ids — the registry links them, it does not own the
   // sessions or duplicate their data (ADR 0009, above-OpenCode layering).
   buildSessionId: text("build_session_id"),

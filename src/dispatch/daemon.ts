@@ -53,7 +53,11 @@ export class DispatchDaemon {
     const backlog = this.repo.resumeIncomplete().reverse();
     let driven = 0;
     for (const dispatch of backlog) {
-      if (dispatch.state === "escalated") continue; // parked — awaiting an external rewake
+      // Both are PARKED (non-terminal but not self-driving): `escalated` awaits a rewake,
+      // `done` awaits an owner-review reopen (ADR 0020 slice 4b — reopenForReview moves it to
+      // `amending`, which IS driven). The daemon never auto-runs either; skipping (not
+      // counting) them lets the poll loop sleep when only parked/finished work remains.
+      if (dispatch.state === "escalated" || dispatch.state === "done") continue;
       try {
         await this.step(dispatch);
       } catch (err) {
@@ -91,9 +95,16 @@ export class DispatchDaemon {
       case "review": // resume: the PR exists, re-enter the review/amend cycle
         await this.review(dispatch.id);
         return;
-      case "amending": // resume: an amend was interrupted — re-review and continue the cycle
-        this.repo.transition(dispatch.id, "review");
-        await this.review(dispatch.id);
+      case "amending":
+        if (dispatch.pendingFindings) {
+          // Reopened by owner review (ADR 0020 slice 4b): amend against the owner's findings,
+          // then let the normal review cycle take over (re-review the fix, merge on clean).
+          await this.ownerAmend(dispatch.id, dispatch.pendingFindings);
+        } else {
+          // Resume: an in-cycle amend was interrupted — re-review and continue.
+          this.repo.transition(dispatch.id, "review");
+          await this.review(dispatch.id);
+        }
         return;
       default: // escalated (parked), done/failed (terminal) — nothing to drive
         return;
@@ -180,6 +191,29 @@ export class DispatchDaemon {
     this.repo.setCost(id, "amend", estimateCost(result.route, result.tokens.input, result.tokens.output));
     this.repo.incrementAmendRound(id);
     return result.changed;
+  }
+
+  // An owner-review reopen (ADR 0020 slice 4b): the dispatch is already `amending` with the
+  // owner's PR findings stashed on it. Amend against them (re-using the chunk's branch, which
+  // still exists on origin — the prior content is already in session-main, so the re-merge
+  // carries just the fix delta), clear the findings, then hand to the normal review cycle:
+  // a clean re-review squash-merges the fix into session-main and the PR updates. If the
+  // builder can't action the owner's note, escalate `attended` — it needs the chief/owner,
+  // not another cheap round.
+  private async ownerAmend(id: string, findings: string): Promise<void> {
+    const dispatch = this.require(id);
+    const target: ReviewTarget = {
+      branch: dispatch.branch,
+      sessionBranch: dispatch.sessionBranch ?? undefined,
+    };
+    const amended = await this.amend(id, target, findings);
+    this.repo.clearPendingFindings(id);
+    if (!amended) {
+      this.repo.escalate(id, "attended");
+      return;
+    }
+    this.repo.transition(id, "review");
+    await this.review(id);
   }
 
   // Squash-merge a cleanly-reviewed chunk into its session-main branch (ADR 0020). The

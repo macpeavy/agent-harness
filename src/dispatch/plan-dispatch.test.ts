@@ -196,6 +196,89 @@ describe("recordOutcomes (session-scoped) + completion", () => {
   });
 });
 
+describe("addressReview (owner-review → amend, ADR 0020 slice 4b)", () => {
+  // Build a session to `review` with two chunks done + merged, and a PR linked.
+  function sessionInReview(): void {
+    decompose([chunk("a"), chunk("b")]);
+    plan.linkSessionPr("S1", { branch: "session-main-S1", prNumber: 7, prUrl: "http://pr/7" });
+    service.dispatchReady("S1");
+    driveTo("a", "done");
+    driveTo("b", "done");
+    service.recordOutcomes("S1");
+  }
+
+  it("routes an inline comment to its chunk and reopens that chunk's dispatch to amend", () => {
+    sessionInReview();
+    const result = service.addressReview("S1", [{ path: "src/a.ts", body: "rename foo", author: "owner" }]);
+
+    expect(result.reopened).toEqual([{ chunkId: "a", dispatchId: "a" }]);
+    expect(result.unrouted).toEqual([]);
+    const d = dispatch.get("a");
+    expect(d?.state).toBe("amending");
+    expect(d?.pendingFindings).toContain("rename foo");
+    expect(d?.pendingFindings).toContain("src/a.ts");
+    expect(dispatch.get("b")?.state).toBe("done"); // untouched
+  });
+
+  it("groups multiple notes on one file into a single reopen", () => {
+    sessionInReview();
+    const result = service.addressReview("S1", [
+      { path: "src/a.ts", body: "first note" },
+      { path: "src/a.ts", body: "second note" },
+    ]);
+
+    expect(result.reopened).toEqual([{ chunkId: "a", dispatchId: "a" }]);
+    const findings = dispatch.get("a")?.pendingFindings ?? "";
+    expect(findings).toContain("first note");
+    expect(findings).toContain("second note");
+  });
+
+  it("surfaces general notes and unknown-file notes to the chief (unrouted), reopening nothing", () => {
+    sessionInReview();
+    const result = service.addressReview("S1", [
+      { path: null, body: "overall this needs a rethink" },
+      { path: "src/ghost.ts", body: "comment on a file no chunk owns" },
+    ]);
+
+    expect(result.reopened).toEqual([]);
+    expect(result.unrouted).toHaveLength(2);
+    expect(result.unrouted[0]?.reason).toContain("general review note");
+    expect(result.unrouted[1]?.reason).toContain("no chunk owns src/ghost.ts");
+  });
+
+  it("doesn't reopen a chunk whose dispatch isn't done — surfaces it instead", () => {
+    decompose([chunk("a"), chunk("b")]);
+    plan.linkSessionPr("S1", { branch: "session-main-S1", prNumber: 7, prUrl: "http://pr/7" });
+    service.dispatchReady("S1");
+    driveTo("a", "done");
+    driveTo("b", "done");
+    service.recordOutcomes("S1"); // session → review
+    // a is still in flight (its dispatch reopened by a prior review, say) — force it:
+    dispatch.reopenForReview("a", "prior");
+    const result = service.addressReview("S1", [{ path: "src/a.ts", body: "another note" }]);
+
+    expect(result.reopened).toEqual([]);
+    expect(result.unrouted[0]?.reason).toContain("not done");
+  });
+
+  it("throws addressing a session that isn't in review", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1"); // session building, not review
+    expect(() => service.addressReview("S1", [])).toThrow("not review");
+  });
+
+  it("sessionPrNumber returns the PR for a review session", () => {
+    sessionInReview();
+    expect(service.sessionPrNumber("S1")).toBe(7);
+  });
+
+  it("sessionPrNumber throws for a session not in review", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1");
+    expect(() => service.sessionPrNumber("S1")).toThrow("not review");
+  });
+});
+
 describe("promote", () => {
   it("marks an escalated chunk strong and re-dispatches it on a fresh id", () => {
     decompose([chunk("a")]);

@@ -5,8 +5,18 @@
 // in the service; this is the thin surface an OpenCode agent reaches it through.
 
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { Decomposed, FeatureStatus, PlanDispatchService } from "../dispatch/plan-dispatch";
+import type {
+  AddressReviewResult,
+  Decomposed,
+  FeatureStatus,
+  OwnerReviewComment,
+  PlanDispatchService,
+} from "../dispatch/plan-dispatch";
 import type { CreateChunk, CreateMetaDecomposition, ReviseChunk } from "../substrate/plan";
+
+/** Reads a session PR's review comments off GitHub — injected so the handler stays testable
+ *  (the real impl is the PR-review leg bound to config; a test passes a fake). */
+export type PrReviewReader = (prNumber: number) => Promise<OwnerReviewComment[]>;
 
 /** The `meta_decompose` tool's input — the feature + its ~1k-LOC session boundaries (ADR 0020
  *  pass 1). No chunks yet; each session is filled by `decompose`. Mirrors CreateMetaDecomposition. */
@@ -46,6 +56,15 @@ function toolError(message: string): CallToolResult {
 function guard(fn: () => CallToolResult): CallToolResult {
   try {
     return fn();
+  } catch (err) {
+    return toolError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+// The async form, for a handler that does I/O (the PR-review read) before touching the service.
+async function guardAsync(fn: () => Promise<CallToolResult>): Promise<CallToolResult> {
+  try {
+    return await fn();
   } catch (err) {
     return toolError(err instanceof Error ? err.message : String(err));
   }
@@ -206,6 +225,51 @@ export function runDispatch(service: PlanDispatchService, sessionId: string): Ca
       `Approved feature ${featureId} (via session ${sessionId}). The session loop will open ` +
         `session-main, launch the ready chunks, and build them into the session PR. Use status to watch.`,
     );
+  });
+}
+
+/** Render the result of an `address_review` call for the chief. */
+export function renderAddressReview(r: AddressReviewResult): string {
+  const lines: string[] = [`Read the owner's review on session ${r.sessionId}.`];
+  if (r.reopened.length > 0)
+    lines.push(
+      `Reopened ${r.reopened.length} chunk(s) to amend — the daemon amends each and re-merges into ` +
+        `session-main, updating the PR: ${r.reopened.map((x) => x.chunkId).join(", ")}.`,
+    );
+  else lines.push("No chunk amends triggered.");
+  if (r.unrouted.length > 0) {
+    lines.push(`${r.unrouted.length} note(s) need your judgment (not auto-routed):`);
+    for (const u of r.unrouted) {
+      const where = u.path ? `${u.path}: ` : "";
+      lines.push(`  - [${u.reason}] ${where}${u.body.replace(/\s+/g, " ").slice(0, 200)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+/** `address_review` — read the session PR's review off GitHub and route it into the amend cycle
+ *  (ADR 0020 slice 4b): inline comments reopen their chunk to amend; general/unroutable notes
+ *  come back for the chief's judgment. Owner-triggered; the substrate reads all the notes. */
+export async function runAddressReview(
+  service: PlanDispatchService,
+  readPr: PrReviewReader | undefined,
+  sessionId: string,
+): Promise<CallToolResult> {
+  return guardAsync(async () => {
+    if (!readPr) return toolError("address_review is not configured with a PR reader on this server");
+    const prNumber = service.sessionPrNumber(sessionId);
+    const comments = await readPr(prNumber);
+    return text(renderAddressReview(service.addressReview(sessionId, comments)));
+  });
+}
+
+/** `close_session` — record the owner's merge of the session PR (ADR 0020 §6): session
+ *  `review → done`, completing the feature when its last session merges. The merge is on
+ *  GitHub (the gate); this is the substrate's record of it. */
+export function runCloseSession(service: PlanDispatchService, sessionId: string): CallToolResult {
+  return guard(() => {
+    const { featureId } = service.closeSession(sessionId);
+    return text(`Closed session ${sessionId} (owner merged its PR). Feature ${featureId} advances if it was its last.`);
   });
 }
 
