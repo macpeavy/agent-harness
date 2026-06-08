@@ -1,9 +1,13 @@
 # agent-harness — session launch + dev ergonomics.
 #
 # A full chief session is one command:
-#   make up    → tmux with three panes (gateway | daemon | chief), attached; you land on
-#                the chief — talk to it, say "go", it dispatches. Logs visible in the panes.
+#   make up    → tmux with the chief (opencode) filling the window, attached; gateway +
+#                daemon ride a thin log strip across the top (glanceable, out of the way).
+#                Talk to the chief, say "go", it dispatches. make down tears it down.
 #   make down  → tear the whole session down.
+#
+# The log strip's height is tunable: make up LOGS_HEIGHT=4  (or =0 to make the chief
+# truly full-window — gateway + daemon then run headless, logs to .orchestrator/*.log).
 #
 # The pieces (also what the panes run):
 #   make gateway → LiteLLM on :4000 (reads .env; needs the .venv — see config/README.md)
@@ -18,6 +22,9 @@
 
 GATEWAY_PORT ?= 4000
 SESSION ?= agent-harness
+# Height (lines) of the top gateway+daemon log strip. 0 = hide them in a separate tmux
+# window so the chief fills the whole window (switch to them with Ctrl-b 1).
+LOGS_HEIGHT ?= 6
 
 # Panes drop to a shell when their process exits, so a crash/Ctrl-C leaves the logs (and a
 # prompt to restart) visible instead of vanishing.
@@ -28,11 +35,15 @@ HOLD := exec $${SHELL:-sh}
 up:
 	@if tmux has-session -t $(SESSION) 2>/dev/null; then \
 		echo "session '$(SESSION)' already up — attaching"; \
+	elif [ "$(LOGS_HEIGHT)" -eq 0 ]; then \
+		tmux new-session -d -s $(SESSION) -n chief 'make chief; $(HOLD)'; \
+		tmux new-window -d -t $(SESSION) -n logs 'make gateway; $(HOLD)'; \
+		tmux split-window -h -t $(SESSION):logs 'make daemon; $(HOLD)'; \
 	else \
-		tmux new-session -d -s $(SESSION) -n stack 'make gateway; $(HOLD)'; \
-		tmux split-window -v -t $(SESSION) 'make daemon; $(HOLD)'; \
-		tmux split-window -v -t $(SESSION) 'make chief; $(HOLD)'; \
-		tmux select-layout -t $(SESSION) tiled >/dev/null; \
+		chief=$$(tmux new-session -d -P -F '#{pane_id}' -s $(SESSION) -n stack 'make chief; $(HOLD)'); \
+		tmux split-window -v -b -l $(LOGS_HEIGHT) -t $$chief 'make gateway; $(HOLD)'; \
+		tmux split-window -h -t $(SESSION) 'make daemon; $(HOLD)'; \
+		tmux select-pane -t $$chief; \
 	fi
 	@tmux attach -t $(SESSION)
 
