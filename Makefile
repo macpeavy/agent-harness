@@ -1,6 +1,7 @@
 # agent-harness — session launch + dev ergonomics.
 #
 # A full chief session is one command:
+#                fleet status pane (~20% left) auto-refreshes every 5s.
 #   make up    → tmux with the chief (opencode) filling the window, attached; gateway +
 #                daemon ride a thin log strip across the top (glanceable, out of the way).
 #                Talk to the chief, say "go", it dispatches. make down tears it down.
@@ -40,7 +41,7 @@ LOADENV := set -a; source .env; set +a;
 # proportionally on attach, ballooning the strip. tput reads the terminal `make up` runs in.
 SIZE := -x $$(tput cols 2>/dev/null || echo 200) -y $$(tput lines 2>/dev/null || echo 50)
 
-.PHONY: up down gateway daemon chief check db
+.PHONY: up down gateway daemon chief check db status
 
 up:
 	@if tmux has-session -t $(SESSION) 2>/dev/null; then \
@@ -49,10 +50,12 @@ up:
 		tmux new-session -d $(SIZE) -s $(SESSION) -n chief 'make chief; $(HOLD)'; \
 		tmux new-window -d -t $(SESSION) -n logs 'make gateway; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION):logs 'make daemon; $(HOLD)'; \
+		tmux split-window -h -p 20 -t $(SESSION):chief 'make status; $(HOLD)'; \
 	else \
 		chief=$$(tmux new-session -d -P -F '#{pane_id}' $(SIZE) -s $(SESSION) -n stack 'make chief; $(HOLD)'); \
 		tmux split-window -v -b -l $(LOGS_HEIGHT) -t $$chief 'make gateway; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION) 'make daemon; $(HOLD)'; \
+		tmux split-window -h -p 20 -t $$chief 'make status; $(HOLD)'; \
 		tmux select-pane -t $$chief; \
 	fi
 	@tmux attach -t $(SESSION)
