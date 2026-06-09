@@ -118,8 +118,8 @@ export function renderFleet(statuses: FeatureStatus[], now = new Date().toISOStr
 
 if (import.meta.main) {
   const dbPath = process.env.SUBSTRATE_DB;
-  const plan = new PlanRepository(dbPath ?? undefined, { migrate: false });
-  const dispatch = new DispatchRepository(dbPath ?? undefined, { migrate: false });
+  const plan = dbPath ? new PlanRepository(dbPath) : new PlanRepository();
+  const dispatch = dbPath ? new DispatchRepository(dbPath) : new DispatchRepository();
   const service = new PlanDispatchService(plan, dispatch);
 
   try {
