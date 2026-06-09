@@ -58,9 +58,10 @@ export function renderFleet(
   for (const feature of statuses) {
     lines.push("");
     const stateAndId = `[${feature.feature.state}] ${feature.feature.id} — "`;
-    const availableForTitle = 80 - stateAndId.length - 1;
+    const budgetSuffix = feature.feature.budgetUsd !== null ? `  budget ${usd(feature.feature.budgetUsd)}` : "";
+    const availableForTitle = 80 - stateAndId.length - 1 - budgetSuffix.length;
     const featureTitle = trunc(feature.feature.title, Math.max(10, availableForTitle));
-    let featureLine = `${stateAndId}${featureTitle}"`;
+    let featureLine = `${stateAndId}${featureTitle}"${budgetSuffix}`;
     if (featureLine.length > 80) {
       featureLine = featureLine.slice(0, 79);
     }
@@ -91,6 +92,16 @@ export function renderFleet(
         sessionLine = sessionLine.slice(0, 79);
       }
       lines.push(sessionLine);
+
+      if (session.budgetExceededUsd !== null) {
+        const budgetPart =
+          feature.feature.budgetUsd !== null ? ` / budget ${usd(feature.feature.budgetUsd)}` : "";
+        let budgetMarker = `  BUDGET-parked: spent ${usd(session.budgetExceededUsd)}${budgetPart} — raise / ship-partial / abandon`;
+        if (budgetMarker.length > 80) {
+          budgetMarker = budgetMarker.slice(0, 79);
+        }
+        lines.push(budgetMarker);
+      }
 
       for (const chunk of sessionStatus.chunks) {
         totalChunks++;
