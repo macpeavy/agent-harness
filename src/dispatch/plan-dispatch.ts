@@ -642,6 +642,13 @@ export class PlanDispatchService {
     };
   }
 
+  /**
+   * Every feature's status, oldest first — the fleet view.
+   */
+  statusAll(): FeatureStatus[] {
+    return this.plan.listAllFeatures().map((f) => this.status(f.id));
+  }
+
   // --- internals ---
 
   // Advance the feature to 'done' once every one of its sessions is done.
