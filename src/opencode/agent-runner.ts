@@ -27,6 +27,10 @@ export interface RunAgentOpts {
   /** Absolute backstop (ms): abort a runaway session even while it's still producing. Also the
    *  hard cap for `sync` mode (which can't idle-detect). */
   absoluteMs?: number;
+  /** Pin the session to a specific gateway route, overriding the agent's default model. Used by
+   *  the builder-acceptance gate to drive a candidate route through the real `builder` persona
+   *  (ADR 0025) without needing a per-route OpenCode agent. */
+  model?: { providerID: string; id: string };
 }
 
 /** Run an agent's drive; if it times out, tear down the OpenCode session so a hung-and-still-
@@ -58,7 +62,7 @@ export async function runAgent(worktree: string, opts: RunAgentOpts): Promise<Ag
   const serve = await startServe(worktree);
   try {
     const client = new OpencodeClient(serve.baseUrl);
-    const sessionID = await client.createSession({ title: opts.title, agent: opts.agent });
+    const sessionID = await client.createSession({ title: opts.title, agent: opts.agent, model: opts.model });
 
     const start = Date.now();
     const reply = await driveOrAbort(client, sessionID, () =>

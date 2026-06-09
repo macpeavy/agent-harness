@@ -237,6 +237,18 @@ export class OpencodeClient {
     }
   }
 
+  /** The raw messages of a session — for inspecting what the agent actually did (e.g. the
+   *  builder-acceptance gate checking for a real write/edit tool call vs text-emitted output).
+   *  Read-only; resolves by session id. Parts carry a `type` and tool-specific fields. */
+  async messages(sessionID: string): Promise<
+    Array<{ info?: { role?: string }; parts?: Array<{ type?: string; text?: string; [k: string]: unknown }> }>
+  > {
+    return (await this.get(`/session/${sessionID}/message`)) as Array<{
+      info?: { role?: string };
+      parts?: Array<{ type?: string; text?: string; [k: string]: unknown }>;
+    }>;
+  }
+
   /** Sum input/output tokens across every assistant message in a session (the full
    *  agentic loop, not just the final turn) — the basis for per-session cost. */
   async sessionTokens(sessionID: string): Promise<{ input: number; output: number }> {

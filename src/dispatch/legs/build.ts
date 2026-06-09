@@ -74,7 +74,7 @@ export function dispatchBranch(issue: Issue): string {
 export async function runBuildLeg(
   issue: Issue,
   config: SubstrateConfig,
-  opts: { reprompt?: string } = {},
+  opts: { reprompt?: string; model?: { providerID: string; id: string } } = {},
 ): Promise<BuildResult> {
   const id = issue.id.toLowerCase();
   const branch = dispatchBranch(issue);
@@ -113,6 +113,7 @@ export async function runBuildLeg(
       mode: "wake",
       idleMs: config.agentIdleMs,
       absoluteMs: config.agentTimeoutMs,
+      model: opts.model,
     });
 
     // 3. Did the builder actually change anything?

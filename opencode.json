@@ -10,8 +10,8 @@
       },
       "models": {
         "builder": {
-          "name": "builder — Mistral Small 4 (cheap, EU-governed; native tool-calling, AGENT-17)",
-          "limit": { "context": 262144, "output": 32000 }
+          "name": "builder — gemini-2.5-flash-lite (cheap, Google/US; gate-cleared, ADR 0025)",
+          "limit": { "context": 1000000, "output": 64000 }
         },
         "reviewer": {
           "name": "reviewer — claude-sonnet-4.6 (strong)",
