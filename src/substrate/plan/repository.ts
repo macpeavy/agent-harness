@@ -211,6 +211,10 @@ export class PlanRepository {
     });
   }
 
+  /** All features, oldest first. */
+  listAllFeatures(): Feature[] {
+    return this.db.select().from(features).orderBy(asc(features.createdAt)).all();
+  }
   // --- sessions ---
 
   /**
