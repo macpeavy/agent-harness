@@ -45,6 +45,24 @@ function chunk(id: string, over: Partial<CreateChunk> = {}): CreateChunk {
   };
 }
 
+describe("features: create / list / get", () => {
+  it("listAllFeatures on an empty db returns []", () => {
+    expect(plan.listAllFeatures()).toEqual([]);
+  });
+
+  it("listAllFeatures returns all features oldest-first", () => {
+    plan.createMetaDecomposition({ feature: FEATURE, sessions: [{ id: "S1" }] });
+    plan.createMetaDecomposition({
+      feature: { id: "F2", title: "Another feature", description: "second intent" },
+      sessions: [{ id: "S2" }],
+    });
+
+    const features = plan.listAllFeatures();
+    expect(features).toHaveLength(2);
+    expect(features.map((f) => f.id)).toEqual(["F1", "F2"]);
+  });
+});
+
 describe("sessions: create / list / get", () => {
   it("creates a session under a feature in 'planning' and reads it back", () => {
     plan.createFeature(FEATURE);
