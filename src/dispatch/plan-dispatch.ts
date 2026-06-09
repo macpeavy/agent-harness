@@ -30,6 +30,7 @@ import {
   type ChunkOutcome,
   type ChunkState,
   type CreateChunk,
+  type CreateFeature,
   type CreateMetaDecomposition,
   type DagEdge,
   type ReviseChunk,
@@ -47,6 +48,16 @@ export interface MaterialisedDispatch {
 export interface FlowedOutcome {
   chunkId: string;
   outcome: ChunkOutcome;
+}
+
+/** The build-direct input (ADR 0026 decision 4) — a small feature one-shot as a single session
+ *  with a single chunk (= the whole feature), no edges. The structure permits exactly one chunk,
+ *  so a tiny feature can't be fanned into a decomposition. `chunk.tierHint` defaults to cheap. */
+export interface BuildDirectInput {
+  feature: CreateFeature;
+  sessionId: string;
+  locEstimate?: number;
+  chunk: Omit<CreateChunk, "sessionId">;
 }
 
 /** What a `decompose` / `redecompose` records back to the caller. */
@@ -197,6 +208,22 @@ export class PlanDispatchService {
   metaDecompose(input: CreateMetaDecomposition): { featureId: string; sessionIds: string[] } {
     this.plan.createMetaDecomposition(input);
     return { featureId: input.feature.id, sessionIds: input.sessions.map((s) => s.id) };
+  }
+
+  /**
+   * Build-direct (ADR 0026 decision 4) — the small-feature path that skips decomposition. A
+   * feature that one-shots (roughly one chunk's worth, one or a few files) is written as a single
+   * session with a single chunk and NO edges: no chunk-DAG, no decomposition pass, one builder +
+   * one review. The degenerate decomposition the substrate already supports, given a name so the
+   * chief takes it deliberately and can't accidentally fan a tiny feature into many chunks (the
+   * $15-on-200-LOC bug). The cheap tier is the default (the chunk's tierHint, "cheap" unless the
+   * chief marks it gnarly). Plan-only: like decompose, this does NOT approve — `dispatch` remains
+   * the separate, explicit owner gate. Composes metaDecompose + decompose; holds no SQL of its own.
+   */
+  buildDirect(input: BuildDirectInput): { featureId: string; sessionId: string; chunkId: string } {
+    this.metaDecompose({ feature: input.feature, sessions: [{ id: input.sessionId, locEstimate: input.locEstimate }] });
+    this.decompose({ sessionId: input.sessionId, chunks: [input.chunk], edges: [] });
+    return { featureId: input.feature.id, sessionId: input.sessionId, chunkId: input.chunk.id };
   }
 
   /**

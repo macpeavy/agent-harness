@@ -102,6 +102,7 @@ describe("tool discovery", () => {
       "add_edge",
       "add_session",
       "address_review",
+      "build_direct",
       "close_session",
       "decompose",
       "dispatch",
@@ -160,6 +161,53 @@ describe("meta_decompose + decompose (two-level, ADR 0020)", () => {
 
   it("decompose returns a tool error for an unknown session", async () => {
     expect(await isError("decompose", { sessionId: "ghost", chunks: CHUNKS, edges: [] })).toBe(true);
+  });
+});
+
+describe("build_direct (small-feature path, ADR 0026)", () => {
+  const CHUNK = {
+    id: "whole",
+    surface: "src/viewer.ts",
+    intent: "the whole small feature",
+    contract: "export function viewer(): void",
+    acceptance: "viewer.test.ts passes",
+  };
+
+  it("writes the feature as ONE session + ONE chunk with no edges (no decomposition)", async () => {
+    const body = await callText("build_direct", {
+      feature: FEATURE,
+      sessionId: "S1",
+      locEstimate: 180,
+      chunk: CHUNK,
+    });
+    expect(body).toContain("Build-direct: feature F1 written as ONE chunk whole in session S1");
+    expect(body).toContain("cheap tier"); // default tier
+    expect(plan.listSessions("F1").map((s) => s.id)).toEqual(["S1"]);
+    expect(plan.listChunks("S1").map((c) => c.id)).toEqual(["whole"]);
+    expect(plan.listEdges("S1")).toEqual([]); // no DAG
+    expect(plan.getChunk("whole")?.tierHint).toBe("cheap");
+  });
+
+  it("is plan-only — it does NOT approve (dispatch stays the gate)", async () => {
+    await callText("build_direct", { feature: FEATURE, sessionId: "S1", chunk: CHUNK });
+    expect(plan.getFeature("F1")?.state).toBe("planning"); // not yet ready/dispatched
+  });
+
+  it("surfaces the build-direct heuristic + chunk target in its description (ADR 0022/0026)", async () => {
+    const { tools } = await client.listTools();
+    const bd = tools.find((t) => t.name === "build_direct");
+    expect(bd?.description).toContain("NO decomposition pass");
+    expect(bd?.description).toContain("250"); // the chunkTargetLines anchor, sourced from config
+    expect(bd?.inputSchema.properties).toHaveProperty("chunk");
+  });
+
+  it("honors an explicit strong tier hint (gnarly one-shot)", async () => {
+    await callText("build_direct", {
+      feature: FEATURE,
+      sessionId: "S1",
+      chunk: { ...CHUNK, tierHint: "strong" },
+    });
+    expect(plan.getChunk("whole")?.tierHint).toBe("strong");
   });
 });
 
@@ -411,6 +459,7 @@ describe("stdio smoke-boot", () => {
         "add_edge",
         "add_session",
         "address_review",
+        "build_direct",
         "close_session",
         "decompose",
         "dispatch",

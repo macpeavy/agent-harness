@@ -85,6 +85,40 @@ describe("outcomeFor", () => {
   });
 });
 
+describe("buildDirect (small-feature path, ADR 0026)", () => {
+  it("writes one session + one chunk, no edges — then dispatches build → review → done", () => {
+    const r = service.buildDirect({
+      feature: FEATURE,
+      sessionId: "S1",
+      locEstimate: 180,
+      chunk: { id: "whole", surface: "src/viewer.ts", intent: "the small feature", contract: "x", acceptance: "t" },
+    });
+    expect(r).toEqual({ featureId: "F1", sessionId: "S1", chunkId: "whole" });
+
+    // Exactly one session, one chunk, NO decomposition fan-out, cheap tier by default.
+    expect(plan.listSessions("F1").map((s) => s.id)).toEqual(["S1"]);
+    expect(plan.listChunks("S1").map((c) => c.id)).toEqual(["whole"]);
+    expect(plan.listEdges("S1")).toEqual([]);
+    expect(plan.getChunk("whole")?.tierHint).toBe("cheap");
+
+    // The lone chunk dispatches and drives to done like any other — one build, one review.
+    const made = service.dispatchReady("S1");
+    expect(made).toHaveLength(1);
+    driveTo("whole", "done");
+    service.recordOutcomes("S1");
+    expect(plan.getChunk("whole")?.state).toBe("done");
+  });
+
+  it("is plan-only — buildDirect does not approve the feature (dispatch is the gate)", () => {
+    service.buildDirect({
+      feature: FEATURE,
+      sessionId: "S1",
+      chunk: { id: "whole", surface: "src/v.ts", intent: "i", contract: "c", acceptance: "a" },
+    });
+    expect(plan.getFeature("F1")?.state).toBe("planning");
+  });
+});
+
 describe("metaDecompose + decompose (two-level, ADR 0020)", () => {
   it("meta-decomposes into sessions, then decomposes a session and returns a summary", () => {
     const meta = service.metaDecompose({ feature: FEATURE, sessions: [{ id: "S1", locEstimate: 900 }, { id: "S2" }] });

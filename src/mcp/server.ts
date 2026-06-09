@@ -19,6 +19,7 @@ import {
   runStatus,
   runDispatch,
   runDecompose,
+  runBuildDirect,
   runMetaDecompose,
   runPromote,
   runRedecompose,
@@ -115,6 +116,36 @@ export function createSubstrateServer(service: PlanDispatchService, opts: Substr
       },
     },
     async (input) => runDecompose(service, input),
+  );
+
+  server.registerTool(
+    "build_direct",
+    {
+      title: "Build a small feature direct — no decomposition",
+      description:
+        "The small-feature path (ADR 0026): write the feature as ONE session + ONE chunk, no " +
+        "chunk-DAG, NO decomposition pass — for a feature that one-shots (roughly one chunk's " +
+        `worth, ~${decomposition.chunkTargetLines} lines / one or a few files). One builder + one ` +
+        "review. Use this INSTEAD of meta_decompose + decompose when the feature is small enough " +
+        "that a decomposition pass wouldn't amortize — decomposition only pays across enough " +
+        "chunks (the $15-on-200-LOC bug was decomposing a tiny feature). The chunk's tier defaults " +
+        "to cheap (Haiku); set tierHint 'strong' ONLY if genuinely gnarly — 'build direct' means " +
+        "skip decomposition, NOT build on the strong model. Plan-only: this does NOT approve — " +
+        "present the plan, say you're building direct, and call dispatch only on the owner's go.",
+      inputSchema: {
+        feature: z
+          .object({
+            id: z.string().describe("unique feature id"),
+            title: z.string().describe("short feature title"),
+            description: z.string().describe("the owner's intent"),
+          })
+          .describe("the small feature being built direct"),
+        sessionId: z.string().describe("unique session id (becomes the session-main branch id)"),
+        locEstimate: z.number().optional().describe("the feature's size estimate (see sessionTargetLines)"),
+        chunk: chunkSpec.describe("the single chunk = the whole feature (a full ADR 0014 spec; tierHint defaults cheap)"),
+      },
+    },
+    async (input) => runBuildDirect(service, input),
   );
 
   // --- planning-amendable: add + revise + prune (ADR 0020 §5b) — edit the plan before approval ---
