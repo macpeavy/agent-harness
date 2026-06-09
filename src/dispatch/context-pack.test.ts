@@ -62,4 +62,26 @@ describe("buildContextPack", () => {
       rmSync(bare, { recursive: true, force: true });
     }
   });
+
+  // ADR 0026 decision 3: the pack is the cacheable prefix pushed into the strong-route build.
+  // For the gateway's prompt cache to hit, the prefix must lead with the stable content and be
+  // byte-identical across calls — these lock both so a reorder can't silently break caching.
+  describe("stable-first byte-stability (ADR 0026 caching)", () => {
+    it("leads with the standards (the maximal stable prefix), before any skill", () => {
+      const pack = buildContextPack({ repoPath: repo, surface: "src/substrate/plan/schema.ts" });
+      expect(pack.indexOf("STANDARDS BODY")).toBeGreaterThanOrEqual(0);
+      // Standards block precedes every skill block — the cacheable prefix is maximal and stable.
+      expect(pack.indexOf("STANDARDS BODY")).toBeLessThan(pack.indexOf("# Skill:"));
+    });
+
+    it("is byte-identical across repeated calls with the same input (deterministic)", () => {
+      const input = { repoPath: repo, surface: "src/substrate/plan/schema.ts" };
+      expect(buildContextPack(input)).toBe(buildContextPack(input));
+    });
+
+    it("is byte-identical for the same explicit skills (stable per-chunk curation)", () => {
+      const input = { repoPath: repo, skills: ["writing-tests", "persistence-drizzle"] };
+      expect(buildContextPack(input)).toBe(buildContextPack(input));
+    });
+  });
 });
