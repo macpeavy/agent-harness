@@ -19,7 +19,12 @@ import { removeWorktree } from "../dispatch/legs/worktree";
 import { startServe } from "../opencode/serve";
 import { OpencodeClient, AgentTimeoutError } from "../opencode/client";
 
-const COST_CEIL_USD = 0.1; // ADR 0025 assertion 4 — a real build of a one-liner is far under this
+// ADR 0025 assertion 4 cost ceiling — a backstop against an empty-loop/spin (the idle timeout
+// is the primary hang guard). Tuned to the builder tier: flash-lite gated at ~$0.002, but Haiku
+// 4.5 ($1/$5, the reliability step-up) costs ~$0.11 for a clean gate build, so $0.10 was a
+// false-negative (ADR 0025 anticipated tuning this). $0.50 clears a clean Haiku build with
+// headroom while still catching a runaway (a many-turn spin at $1/$5 runs to dollars).
+const COST_CEIL_USD = 0.5;
 const GATE_IDLE_MS = 60_000; // tighter than the build default — a dud should die fast
 const GATE_SURFACE = "src/_gate/touch.ts";
 const GATE_CONTENT = "export const GATE_OK = true;";

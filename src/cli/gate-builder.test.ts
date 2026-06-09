@@ -41,9 +41,13 @@ describe("evaluateGate (ADR 0025 builder-acceptance assertions)", () => {
   });
 
   it("FAILS assertion 4 when cost exceeds the ceiling", () => {
-    const v = evaluateGate({ ...GOOD, costUsd: 0.5 });
+    const v = evaluateGate({ ...GOOD, costUsd: 0.9 });
     expect(v.pass).toBe(false);
     expect(v.failures.some((f) => f.startsWith("4 (cost)"))).toBe(true);
+  });
+
+  it("passes a clean Haiku-tier build (~$0.11) under the tuned ceiling", () => {
+    expect(evaluateGate({ ...GOOD, costUsd: 0.11 }).pass).toBe(true);
   });
 
   it("does NOT fail assertion 3 when the session couldn't be inspected (null defers to #1)", () => {

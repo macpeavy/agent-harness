@@ -10,8 +10,8 @@
       },
       "models": {
         "builder": {
-          "name": "builder — gemini-2.5-flash-lite (cheap, Google/US; gate-cleared, ADR 0025)",
-          "limit": { "context": 1000000, "output": 64000 }
+          "name": "builder — claude-haiku-4.5 (cheap, Anthropic/US; gate-cleared, ADR 0025 step-up)",
+          "limit": { "context": 200000, "output": 64000 }
         },
         "reviewer": {
           "name": "reviewer — claude-sonnet-4.6 (strong)",
