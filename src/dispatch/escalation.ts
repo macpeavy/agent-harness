@@ -22,6 +22,7 @@ export type FailureMode =
   | { kind: "timeout"; message: string } // row 3 — model-turn timeout
   | { kind: "amend-cap" } // row 4 — review kept finding blockers past the cap (or a stuck amend)
   | { kind: "owner-note" } // row 5 — builder couldn't action an owner review note
+  | { kind: "blocked"; message: string } // headless permission prompt — needs a human (ADR 0026 wake)
   | { kind: "substrate"; message: string }; // row 6 — unrecoverable (repo/DB gone)
 
 /** How a failure is handled: park (escalate, non-terminal) for everything recoverable; terminal
@@ -48,6 +49,8 @@ export function classifyFailure(mode: FailureMode): Handling {
       return { terminal: false, reason: "re-decompose" }; // row 4
     case "owner-note":
       return { terminal: false, reason: "attended" }; // row 5
+    case "blocked":
+      return { terminal: false, reason: "attended", message: mode.message }; // headless permission → human
     case "substrate":
       return { terminal: true, message: mode.message }; // row 6 — the only legitimate terminal fail
   }

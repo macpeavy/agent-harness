@@ -27,6 +27,7 @@ describe("classifyFailure (the ADR 0023 taxonomy in code)", () => {
     expect(classifyFailure({ kind: "timeout", message: "slow" })).toEqual({ terminal: false, reason: "attended", message: "slow" });
     expect(classifyFailure({ kind: "amend-cap" })).toEqual({ terminal: false, reason: "re-decompose" });
     expect(classifyFailure({ kind: "owner-note" })).toEqual({ terminal: false, reason: "attended" });
+    expect(classifyFailure({ kind: "blocked", message: "bash: rm" })).toEqual({ terminal: false, reason: "attended", message: "bash: rm" });
     expect(classifyFailure({ kind: "substrate", message: "db gone" })).toEqual({ terminal: true, message: "db gone" });
   });
 });

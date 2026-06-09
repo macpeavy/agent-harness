@@ -15,7 +15,7 @@ import { runReviewLeg, type ReviewResult, type ReviewTarget } from "./legs/revie
 import { runAmendLeg, type AmendResult } from "./legs/amend";
 import { runMergeLeg, type MergeResult, type MergeTarget } from "./legs/merge";
 import { loadConfig, type SubstrateConfig } from "../config";
-import { AgentTimeoutError } from "../opencode/client";
+import { AgentBlockedError, AgentTimeoutError } from "../opencode/client";
 import { DispatchRepository, type Dispatch } from "../substrate/dispatch";
 import { escalateOrFail } from "./escalation";
 
@@ -92,6 +92,7 @@ export class DispatchDaemon {
         // (chief-visible, with a reason), never a terminal fail or an unhandled throw the loop
         // can't survive. Both route through the one escalation surface.
         if (err instanceof AgentTimeoutError) this.escalateTimeout(dispatch.id, err);
+        else if (err instanceof AgentBlockedError) this.escalateBlocked(dispatch.id, err);
         else this.parkLegError(dispatch.id, err);
       }
       driven++;
@@ -279,6 +280,14 @@ export class DispatchDaemon {
   private escalateTimeout(id: string, err: AgentTimeoutError): void {
     escalateOrFail(this.repo, id, { kind: "timeout", message: err.message });
     console.error(`dispatch ${id} escalated (timeout): ${err.message}`);
+  }
+
+  // The session blocked on a headless permission prompt (ADR 0026 wake): park it for a human
+  // (reason `attended`) — re-prompting won't help; the persona's permission set needs the action
+  // allowed (or the owner to weigh in). Honest reason over a mislabeled timeout/error.
+  private escalateBlocked(id: string, err: AgentBlockedError): void {
+    escalateOrFail(this.repo, id, { kind: "blocked", message: err.message });
+    console.error(`dispatch ${id} escalated (attended): ${err.message}`);
   }
 
   // A leg threw (ADR 0023 row 2): park it (reason `error`) through the central surface, not a
