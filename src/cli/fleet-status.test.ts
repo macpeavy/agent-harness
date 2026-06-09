@@ -204,7 +204,7 @@ describe("renderFleet", () => {
         id: "feat-1",
         title: "This is a very long feature title that should be truncated",
         state: "building",
-        budgetUsd: null,
+        budgetUsd: 10.5,
       },
       cost: { buildUsd: 1.2345, reviewUsd: 6.789, amendUsd: 0.5, window: { start: 0, end: 100 } },
       sessions: [
@@ -324,5 +324,54 @@ describe("renderFleet", () => {
       expect(renderFleet([status], undefined, new Map([["feat-1", null]]))).toContain("chief n/a");
       expect(renderFleet([status], undefined, new Map([["feat-1", 0]]))).toContain("chief $0.0000");
     });
+  });
+
+  it("shows budget on feature line when budgetUsd is set", () => {
+    const mockStatus: FeatureStatus = {
+      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: 1.5 },
+      cost: ZERO_COST,
+      sessions: [],
+    };
+    const output = renderFleet([mockStatus]);
+    expect(output).toContain("— budget $1.5000");
+  });
+
+  it("marks budget-parked session", () => {
+    const mockStatus: FeatureStatus = {
+      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: 5.0 },
+      cost: ZERO_COST,
+      sessions: [
+        {
+          session: {
+            id: "sess-1",
+            state: "building",
+            branch: null,
+            prNumber: 42,
+            prUrl: null,
+            locEstimate: 800,
+            lastError: null,
+            budgetExceededUsd: 2.0,
+          },
+          chunks: [],
+          readout: {
+            total: 0,
+            reachedReady: 0,
+            escalated: 0,
+            failed: 0,
+            inFlight: 0,
+            cheapAbleFraction: 0,
+            blendedCostPerReadyUsd: 0,
+            totalCostUsd: 0,
+            amendRoundsHistogram: {},
+          },
+          escalations: [],
+        },
+      ],
+    };
+    const output = renderFleet([mockStatus]);
+    expect(output).toContain("BUDGET-parked");
+    expect(output).toContain("spent $2.0000");
+    expect(output).toContain("budget $5.0000");
+    expect(output).toContain("raise / ship-partial / abandon");
   });
 });

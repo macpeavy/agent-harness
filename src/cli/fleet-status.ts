@@ -61,6 +61,8 @@ export function renderFleet(
     const availableForTitle = 80 - stateAndId.length - 1;
     const featureTitle = trunc(feature.feature.title, Math.max(10, availableForTitle));
     let featureLine = `${stateAndId}${featureTitle}"`;
+    const budget = feature.feature.budgetUsd !== null ? ` — budget ${usd(feature.feature.budgetUsd)}` : "";
+    featureLine += budget;
     if (featureLine.length > 80) {
       featureLine = featureLine.slice(0, 79);
     }
@@ -91,6 +93,12 @@ export function renderFleet(
         sessionLine = sessionLine.slice(0, 79);
       }
       lines.push(sessionLine);
+
+      if (session.budgetExceededUsd !== null) {
+        const budgetPart = feature.feature.budgetUsd !== null ? ` / budget ${usd(feature.feature.budgetUsd)}` : "";
+        const budgetLine = `  BUDGET-parked: spent ${usd(session.budgetExceededUsd)}${budgetPart} — raise / ship-partial / abandon`;
+        lines.push(budgetLine.length > 80 ? budgetLine.slice(0, 79) : budgetLine);
+      }
 
       for (const chunk of sessionStatus.chunks) {
         totalChunks++;
