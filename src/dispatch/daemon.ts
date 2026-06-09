@@ -9,7 +9,7 @@
 //
 // Run:  bun run src/dispatch/daemon.ts   (needs the gateway up + env)
 
-import { estimateCost } from "./cost";
+import { ledgerPath, readSpendLedger, spendInWindow } from "./litellm-spend";
 import { dispatchBranch, runBuildLeg, type BuildResult, type Issue } from "./legs/build";
 import { runReviewLeg, type ReviewResult, type ReviewTarget } from "./legs/review";
 import { runAmendLeg, type AmendResult } from "./legs/amend";
@@ -26,6 +26,13 @@ export interface DispatchLegs {
   amend(target: ReviewTarget, findings: string, config: SubstrateConfig): Promise<AmendResult>;
   merge(target: MergeTarget, config: SubstrateConfig): Promise<MergeResult>;
 }
+
+/** Reconcile a leg's REAL cost (ADR 0026): the sum of the gateway-recorded spend on `route`
+ *  within the leg's wall-clock window [startMs, endMs]. Injected so the daemon is testable
+ *  without a live ledger; the default reads the LiteLLM spend ledger the gateway callback writes
+ *  (config/litellm_spend_logger.py) — replacing the prior token-count estimation as the source
+ *  of recorded cost. */
+export type ReconcileCost = (route: string, startMs: number, endMs: number) => number;
 
 // The no-op gate's re-instruction (ADR 0023 §3b): when the builder reports done but the diff is
 // empty, re-prompt ONCE with this before parking — a weak model sometimes explores and declares
@@ -45,12 +52,21 @@ const defaultLegs: DispatchLegs = {
 
 export class DispatchDaemon {
   private running = false;
+  private readonly reconcileCost: ReconcileCost;
 
   constructor(
     private readonly repo: DispatchRepository,
     private readonly config: SubstrateConfig,
     private readonly legs: DispatchLegs = defaultLegs,
-  ) {}
+    reconcileCost?: ReconcileCost,
+  ) {
+    // Default: read the gateway's spend ledger fresh and sum the route's spend in the window.
+    // Re-reading per leg is O(ledger) — fine at the spike's scale; the ledger is the live cost
+    // of record, so a fresh read picks up the leg's just-billed calls (ADR 0026).
+    this.reconcileCost =
+      reconcileCost ??
+      ((route, start, end) => spendInWindow(readSpendLedger(ledgerPath(config.repoPath)), route, start, end));
+  }
 
   /**
    * Process the current backlog once: every drivable incomplete dispatch (queued /
@@ -144,15 +160,17 @@ export class DispatchDaemon {
       sessionBranch: dispatch.sessionBranch ?? undefined,
     };
 
+    let start = Date.now();
     let result = await this.legs.build(issue, this.config);
-    this.recordBuild(id, result);
+    this.recordBuild(id, result, start, Date.now());
 
     // No-op gate (ADR 0023 §3b): an empty diff means the builder reported done without writing
     // anything (the false-success no-op). Re-prompt ONCE with a sharper instruction and rebuild;
     // if it's STILL empty, park it (reason `no-op`) — never terminal-fail, never loop.
     if (!result.changed) {
+      start = Date.now();
       result = await this.legs.build(issue, this.config, { reprompt: NO_OP_REPROMPT });
-      this.recordBuild(id, result);
+      this.recordBuild(id, result, start, Date.now());
       if (!result.changed) {
         const { reason } = escalateOrFail(this.repo, id, { kind: "no-op" });
         console.error(`dispatch ${id} escalated (${reason}): builder changed nothing after a re-prompt`);
@@ -163,12 +181,13 @@ export class DispatchDaemon {
     await this.review(id, result.branch);
   }
 
-  // Record a build attempt's instrument fields. Cost accumulates (the no-op gate runs the leg
-  // twice); route + session id reflect the latest attempt.
-  private recordBuild(id: string, result: BuildResult): void {
+  // Record a build attempt's instrument fields. Cost is the REAL gateway-recorded spend on the
+  // build route within this attempt's window (ADR 0026), and accumulates (the no-op gate runs the
+  // leg twice — both attempts billed); route + session id reflect the latest attempt.
+  private recordBuild(id: string, result: BuildResult, startMs: number, endMs: number): void {
     this.repo.setSessions(id, { buildSessionId: result.buildSessionId });
     this.repo.setRoute(id, result.route);
-    this.repo.setCost(id, "build", estimateCost(result.route, result.tokens.input, result.tokens.output));
+    this.repo.setCost(id, "build", this.reconcileCost(result.route, startMs, endMs));
   }
 
   // The review → amend cycle (ADR 0008): review; if clean, ready (done); if blocking,
@@ -182,9 +201,10 @@ export class DispatchDaemon {
         sessionBranch: dispatch.sessionBranch ?? undefined,
       };
 
+      const reviewStart = Date.now();
       const result = await this.legs.review(target, this.config);
       this.repo.setSessions(id, { reviewSessionId: result.reviewSessionId });
-      this.repo.setCost(id, "review", estimateCost(result.route, result.tokens.input, result.tokens.output));
+      this.repo.setCost(id, "review", this.reconcileCost(result.route, reviewStart, Date.now()));
 
       if (result.verdict === "clean") {
         // Clean review → squash-merge the chunk into session-main (ADR 0020), then done.
@@ -213,9 +233,10 @@ export class DispatchDaemon {
   // One amend round: re-run the builder against the findings, record the round + cost.
   // Returns whether the amend actually changed anything.
   private async amend(id: string, target: ReviewTarget, findings: string): Promise<boolean> {
+    const amendStart = Date.now();
     const result = await this.legs.amend(target, findings, this.config);
     this.repo.setRoute(id, result.route);
-    this.repo.setCost(id, "amend", estimateCost(result.route, result.tokens.input, result.tokens.output));
+    this.repo.setCost(id, "amend", this.reconcileCost(result.route, amendStart, Date.now()));
     this.repo.incrementAmendRound(id);
     return result.changed;
   }

@@ -432,6 +432,26 @@ describe("status (feature → sessions → chunks)", () => {
     const s = service.status("F1");
     expect(s.sessions[0]?.escalations).toEqual([{ chunkId: "a", dispatchId: "a", kind: "re-decompose", reason: null }]);
   });
+
+  it("reconciles real per-leg cost + a chief-attribution window (ADR 0026)", () => {
+    decompose([chunk("a"), chunk("b")]);
+    service.dispatchReady("S1");
+    // The daemon records real per-leg spend onto the dispatch rows; sum them across the feature.
+    dispatch.setCost("a", "build", 0.01);
+    dispatch.setCost("a", "review", 0.03);
+    dispatch.setCost("b", "build", 0.02);
+    dispatch.setCost("b", "amend", 0.005);
+
+    const s = service.status("F1");
+    expect(s.cost.buildUsd).toBeCloseTo(0.03, 6); // a:0.01 + b:0.02
+    expect(s.cost.reviewUsd).toBeCloseTo(0.03, 6);
+    expect(s.cost.amendUsd).toBeCloseTo(0.005, 6);
+    // The window opens at feature creation (so the chief's pre-dispatch planning spend is in it)
+    // and closes no earlier than the latest dispatch activity.
+    const feature = plan.getFeature("F1")!;
+    expect(s.cost.window.start).toBe(feature.createdAt);
+    expect(s.cost.window.end).toBeGreaterThanOrEqual(feature.createdAt);
+  });
 });
 
 describe("approve (the owner gate, ADR 0020 slice 2b)", () => {

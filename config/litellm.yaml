@@ -58,10 +58,15 @@ litellm_settings:
   # Drop params a given upstream doesn't support rather than 400-ing — keeps the
   # same client call working across mistral / openai / google / anthropic via OpenRouter.
   drop_params: true
-  # Per-request cost is logged for every call — the spike's cost signal for AGENT-9.
-  # NOTE: a persistent spend dashboard and cross-request hard-budget enforcement need
-  # a database (DATABASE_URL). For the spike the hard $25 ceiling is enforced at the
-  # OpenRouter key's credit limit (see config/README.md). Add the DB later for the UI.
+  # The cost system of record (ADR 0026, AGENT-41). LiteLLM computes the real cost of every
+  # call; this callback appends it to a JSONL ledger (.substrate/litellm-spend.jsonl) the
+  # substrate reconciles per route + time window — so a feature's recorded cost is REAL
+  # LiteLLM numbers for every leg (build/review/amend) AND the chief, not token-count
+  # estimation. The dotted path resolves to config/litellm_spend_logger.py (next to this file).
+  # NOTE: this is logging only, not a budget gate. The hard $25 ceiling is still enforced at the
+  # OpenRouter key's credit limit (see config/README.md) — LiteLLM's own cross-request budget
+  # enforcement / spend dashboard need a Postgres DATABASE_URL (its Prisma store can't be SQLite).
+  callbacks: ["litellm_spend_logger.spend_logger_instance"]
 
 general_settings:
   # The bearer key clients (OpenCode, the substrate) present to this gateway.
