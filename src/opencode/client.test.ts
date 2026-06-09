@@ -3,13 +3,40 @@ import { activitySignature, timeoutKind } from "./client";
 
 describe("activitySignature (idle activity proxy, AGENT-38)", () => {
   it("grows as messages and text accrue; is stable when nothing changes", () => {
-    const a = [{ parts: [{ text: "hi" }] }];
-    const b = [{ parts: [{ text: "hi there" }] }]; // same message, longer part
-    const c = [{ parts: [{ text: "hi there" }] }, { parts: [{ text: "x" }] }]; // a new message
+    const a = [{ parts: [{ type: "text", text: "hi" }] }];
+    const b = [{ parts: [{ type: "text", text: "hi there" }] }]; // same message, longer part
+    const c = [{ parts: [{ type: "text", text: "hi there" }] }, { parts: [{ type: "text", text: "x" }] }]; // new message
     expect(activitySignature(a)).toBe(activitySignature(a)); // stable
     expect(activitySignature(b)).toBeGreaterThan(activitySignature(a)); // part grew
     expect(activitySignature(c)).toBeGreaterThan(activitySignature(b)); // message added
     expect(activitySignature([])).toBe(0);
+  });
+
+  // The reviewer bug: its work is tool calls + results (no text), which the text-only signature
+  // missed — so a working reviewer looked idle and got killed. Tool activity MUST register.
+  it("registers tool-call and tool-result activity (not just text)", () => {
+    const justTask = [{ parts: [{ type: "text", text: "review this" }] }];
+    // The reviewer invokes a tool (a new tool part, no text) — that is progress, not idle.
+    const toolCalled = [
+      { parts: [{ type: "text", text: "review this" }, { type: "tool", state: "running", tool: "bash" }] },
+    ];
+    // The tool returns a large diff — the part transitions and fills with output: more progress.
+    const toolReturned = [
+      {
+        parts: [
+          { type: "text", text: "review this" },
+          { type: "tool", state: "completed", tool: "bash", output: "diff --git ...".repeat(20) },
+        ],
+      },
+    ];
+    expect(activitySignature(toolCalled)).toBeGreaterThan(activitySignature(justTask)); // tool call counts
+    expect(activitySignature(toolReturned)).toBeGreaterThan(activitySignature(toolCalled)); // result counts
+  });
+
+  it("a new step boundary (no text) still counts as activity", () => {
+    const before = [{ parts: [{ type: "step-start" }] }];
+    const after = [{ parts: [{ type: "step-start" }, { type: "step-finish" }] }];
+    expect(activitySignature(after)).toBeGreaterThan(activitySignature(before));
   });
 });
 

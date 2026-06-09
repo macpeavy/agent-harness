@@ -46,13 +46,42 @@ export class AgentTimeoutError extends Error {
   }
 }
 
-/** A cheap measure of how much a session has produced — message count plus total text length
- *  across all parts. A change between polls means the agent is still working (resets the idle
- *  clock); no change means it's stalled. Pure, so the idle logic is testable. */
-export function activitySignature(msgs: { parts?: { text?: string }[] }[]): number {
+/** A cheap measure of how much a session has produced — a change between polls means the agent is
+ *  still working (resets the idle clock); no change means it's stalled.
+ *
+ *  It counts ALL part activity, not just text: messages, the number of parts, and each part's
+ *  payload size (text length for text parts, serialized size otherwise). The earlier version summed
+ *  only `text` length + message count, which was BLIND to tool-call and tool-result parts — so a
+ *  tool-heavy agent (above all the reviewer, which spends its turns running `git diff` and reading
+ *  files, emitting little text until the final verdict) looked idle while actively working and got
+ *  killed at the idle window. Counting parts + their content means a new tool call, a tool result,
+ *  or a step marker all register as progress; a genuinely stalled session (no parts changing) still
+ *  idles, and the absolute backstop still caps a runaway. Pure, so the idle logic is testable.
+ *  (`/event` SSE is the future cleaner activity source — see waitForReply.) */
+export function activitySignature(msgs: { parts?: unknown[] }[]): number {
   let sig = msgs.length;
-  for (const m of msgs) for (const p of m.parts ?? []) sig += p.text?.length ?? 0;
+  for (const m of msgs) {
+    const parts = m.parts ?? [];
+    sig += parts.length; // a new part (tool call, tool result, step boundary) is progress
+    for (const p of parts) sig += partActivitySize(p);
+  }
   return sig;
+}
+
+/** A part's contribution to the activity signature: text length for a text part, else the part's
+ *  serialized size (which grows as a tool part appears and transitions running → completed, and as
+ *  its output fills in). Falls back to 1 for an unserializable/non-object part so it still counts. */
+function partActivitySize(part: unknown): number {
+  if (part && typeof part === "object") {
+    const text = (part as { text?: unknown }).text;
+    if (typeof text === "string") return text.length;
+    try {
+      return JSON.stringify(part).length;
+    } catch {
+      return 1;
+    }
+  }
+  return 1;
 }
 
 /** Whether a poll should abort, and why (AGENT-38 idle detection): `absolute` if the total wait
