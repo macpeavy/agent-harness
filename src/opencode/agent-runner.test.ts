@@ -1,6 +1,22 @@
 import { describe, expect, it } from "bun:test";
-import { driveOrAbort, type SessionKiller } from "./agent-runner";
+import { driveOrAbort, resolveModel, type SessionKiller } from "./agent-runner";
 import { AgentTimeoutError } from "./client";
+
+describe("resolveModel (pin the agent's own route — the reviewer-on-Haiku fix)", () => {
+  it("defaults to the agent's own litellm route (createSession does NOT apply the agent's model)", () => {
+    // Without this the session ran on the global default model: the reviewer/builder-strong on Haiku.
+    expect(resolveModel("reviewer")).toEqual({ providerID: "litellm", id: "reviewer" });
+    expect(resolveModel("builder-strong")).toEqual({ providerID: "litellm", id: "builder-strong" });
+    expect(resolveModel("builder")).toEqual({ providerID: "litellm", id: "builder" });
+  });
+
+  it("honors an explicit pin (the builder-acceptance gate probing a candidate route)", () => {
+    expect(resolveModel("builder", { providerID: "litellm", id: "builder-nano" })).toEqual({
+      providerID: "litellm",
+      id: "builder-nano",
+    });
+  });
+});
 
 // A fake session killer that records deleteSession calls (Part 4 — orphan teardown on timeout).
 function killer(opts: { deleteThrows?: boolean } = {}): SessionKiller & { deleted: string[] } {

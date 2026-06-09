@@ -33,6 +33,23 @@ export interface RunAgentOpts {
   model?: { providerID: string; id: string };
 }
 
+/**
+ * The gateway model an agent must run on. CRITICAL (the dogfood bug): OpenCode's createSession
+ * applies an agent's prompt + permissions but NOT its configured model — the session otherwise
+ * inherits the server's GLOBAL default model (opencode.json `model`, = `litellm/builder`). So
+ * unless a caller pins one (the builder-acceptance gate, probing a candidate route), we pin the
+ * agent's OWN route. Every persona is wired to `litellm/<agent-name>` (opencode.json), so the
+ * route id IS the agent name. Without this the reviewer and builder-strong silently ran on the
+ * cheap default — the "strong review" was Haiku, and tier-promotion was a no-op (the cost
+ * instrument caught it: review billed $0 because its calls logged as `builder`, not `reviewer`).
+ */
+export function resolveModel(
+  agent: string,
+  pinned?: { providerID: string; id: string },
+): { providerID: string; id: string } {
+  return pinned ?? { providerID: "litellm", id: agent };
+}
+
 /** Run an agent's drive; if it times out, tear down the OpenCode session so a hung-and-still-
  *  generating session can't keep billing after the substrate escalates (AGENT-38 part 4).
  *  deleteSession is idempotent (404-safe); a teardown failure must not mask the timeout. */
@@ -62,7 +79,10 @@ export async function runAgent(worktree: string, opts: RunAgentOpts): Promise<Ag
   const serve = await startServe(worktree);
   try {
     const client = new OpencodeClient(serve.baseUrl);
-    const sessionID = await client.createSession({ title: opts.title, agent: opts.agent, model: opts.model });
+    // Pin the agent's own route unless the caller pinned one — else OpenCode runs the session on
+    // the server's global default model, not the agent's (the reviewer-on-Haiku bug). See resolveModel.
+    const model = resolveModel(opts.agent, opts.model);
+    const sessionID = await client.createSession({ title: opts.title, agent: opts.agent, model });
 
     const start = Date.now();
     const reply = await driveOrAbort(client, sessionID, () =>
