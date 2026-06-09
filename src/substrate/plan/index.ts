@@ -18,7 +18,7 @@ export {
   isSessionTerminal,
   validateDag,
 } from "./model";
-export type { DagEdge } from "./model";
+export type { DagEdge, FeatureGraph, SessionGraph, ChunkGraph } from "./model";
 export type {
   Feature,
   NewFeature,

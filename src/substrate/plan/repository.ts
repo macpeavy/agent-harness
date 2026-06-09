@@ -11,7 +11,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, or } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import {
@@ -26,14 +26,18 @@ import {
   type NewFeature,
   type NewSession,
   type Session,
+  type Edge,
 } from "./schema";
+import { dispatches } from "../dispatch/schema";
 import {
   CHUNK_TRANSITIONS,
   FEATURE_TRANSITIONS,
   SESSION_TRANSITIONS,
   type ChunkOutcome,
   type ChunkState,
+  type FeatureGraph,
   type FeatureState,
+  type SessionGraph,
   type SessionState,
   type TierHint,
 } from "./model";
@@ -136,6 +140,36 @@ function edgeValues(sessionId: string, from: string, to: string, now: number): N
   return { id: `${from}->${to}`, sessionId, fromChunkId: from, toChunkId: to, createdAt: now };
 }
 
+// Kahn's topological sort over a session's chunks. Among candidates (indegree 0) at each
+// step, uses createdAt as a stable tiebreak so the order is deterministic across restarts.
+function topoSort(sessionChunks: Chunk[], sessionEdges: Edge[]): Chunk[] {
+  const chunkById = new Map(sessionChunks.map((c) => [c.id, c]));
+  const indegree = new Map<string, number>(sessionChunks.map((c) => [c.id, 0]));
+  const succ = new Map<string, string[]>();
+  for (const e of sessionEdges) {
+    indegree.set(e.toChunkId, (indegree.get(e.toChunkId) ?? 0) + 1);
+    succ.set(e.fromChunkId, [...(succ.get(e.fromChunkId) ?? []), e.toChunkId]);
+  }
+  const result: Chunk[] = [];
+  const ready = sessionChunks
+    .filter((c) => (indegree.get(c.id) ?? 0) === 0)
+    .sort((a, b) => a.createdAt - b.createdAt);
+  while (ready.length > 0) {
+    const node = ready.shift() as Chunk;
+    result.push(node);
+    const nexts = (succ.get(node.id) ?? [])
+      .map((id) => {
+        const d = (indegree.get(id) ?? 0) - 1;
+        indegree.set(id, d);
+        return d === 0 ? chunkById.get(id) : undefined;
+      })
+      .filter((c): c is Chunk => c !== undefined)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    ready.push(...nexts);
+  }
+  return result;
+}
+
 export class PlanRepository {
   private sqlite: Database;
   private db: BunSQLiteDatabase;
@@ -208,6 +242,68 @@ export class PlanRepository {
   /** Every feature in the db, oldest first. */
   listAllFeatures(): Feature[] {
     return this.db.select().from(features).orderBy(asc(features.createdAt)).all();
+  }
+
+  /**
+   * Load the complete object graph for one feature. Returns null if the feature is unknown.
+   * Sessions are ordered oldest-first; chunks within each session are in topological order
+   * (Kahn's algorithm, createdAt tiebreak among candidates ready at the same step). Dispatches
+   * are read from the shared dispatch table via the same db handle (cross-context read, gated
+   * behind the repository boundary, ADR 0017).
+   */
+  loadFeatureGraph(featureId: string): FeatureGraph | null {
+    const feature = this.db.select().from(features).where(eq(features.id, featureId)).get() ?? null;
+    if (!feature) return null;
+
+    const sessionRows: Session[] = this.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.featureId, featureId))
+      .orderBy(asc(sessions.createdAt))
+      .all();
+
+    const sessionIds = sessionRows.map((s) => s.id);
+    const allChunks: Chunk[] =
+      sessionIds.length === 0
+        ? []
+        : this.db
+            .select()
+            .from(chunks)
+            .where(inArray(chunks.sessionId, sessionIds))
+            .orderBy(asc(chunks.createdAt))
+            .all();
+    const allEdges: Edge[] =
+      sessionIds.length === 0
+        ? []
+        : this.db
+            .select()
+            .from(edges)
+            .where(inArray(edges.sessionId, sessionIds))
+            .orderBy(asc(edges.createdAt))
+            .all();
+
+    const dispatchIds = allChunks.map((c) => c.dispatchId).filter((id): id is string => id !== null);
+    const dispatchRows =
+      dispatchIds.length === 0
+        ? []
+        : this.db.select().from(dispatches).where(inArray(dispatches.id, dispatchIds)).all();
+    const dispatchById = new Map(dispatchRows.map((d) => [d.id, d]));
+
+    const sessionGraphs: SessionGraph[] = sessionRows.map((session) => {
+      const sessionChunks = allChunks.filter((c) => c.sessionId === session.id);
+      const sessionEdges = allEdges.filter((e) => e.sessionId === session.id);
+      const sortedChunks = topoSort(sessionChunks, sessionEdges);
+      return {
+        session,
+        chunks: sortedChunks.map((chunk) => ({
+          chunk,
+          dispatch: chunk.dispatchId !== null ? (dispatchById.get(chunk.dispatchId) ?? null) : null,
+        })),
+        edges: sessionEdges,
+      };
+    });
+
+    return { feature, sessions: sessionGraphs };
   }
 
   /** Move a feature to a new state, validated against the feature graph. */
