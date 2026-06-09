@@ -25,6 +25,12 @@ const CONFIG: SubstrateConfig = {
 
 const ISSUE: Issue = { id: "ISSUE-1", title: "Add a thing", body: "Do the thing." };
 
+// A deterministic stand-in for the LiteLLM spend ledger (ADR 0026): every leg's window
+// reconciles to a fixed per-route cost, so the daemon's real-cost recording is exercised
+// without a live gateway/ledger. Routes mirror the fake legs (builder / reviewer).
+const FAKE_COST: Record<string, number> = { builder: 0.01, "builder-strong": 0.05, reviewer: 0.03 };
+const fakeReconcile = (route: string): number => FAKE_COST[route] ?? 0;
+
 let dir: string;
 let repo: DispatchRepository;
 
@@ -123,7 +129,7 @@ describe("the happy path", () => {
   it("drives a queued dispatch build → review → done, recording the instrument", async () => {
     enqueue("d1");
     const { legs, rec } = fakeLegs();
-    const daemon = new DispatchDaemon(repo, CONFIG, legs);
+    const daemon = new DispatchDaemon(repo, CONFIG, legs, fakeReconcile);
 
     const driven = await daemon.runOnce();
 
@@ -144,7 +150,7 @@ describe("the happy path", () => {
   it("builds from the dispatch's stored spec", async () => {
     enqueue("d1", { id: "ISSUE-9", title: "Custom", body: "the exact spec" });
     const { legs, rec } = fakeLegs();
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(rec.build[0]?.body).toBe("the exact spec");
     expect(rec.build[0]?.id).toBe("ISSUE-9");
@@ -166,7 +172,7 @@ describe("curation passthrough (ADR 0018/0019)", () => {
       skills: ["persistence-drizzle", "writing-tests"],
     });
     const { legs, rec } = fakeLegs();
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(rec.build[0]?.surface).toBe("src/substrate/dispatch/schema.ts");
     expect(rec.build[0]?.skills).toEqual(["persistence-drizzle", "writing-tests"]); // JSON round-trip
@@ -175,7 +181,7 @@ describe("curation passthrough (ADR 0018/0019)", () => {
   it("leaves surface/skills undefined when the row carries none (standards-only fallback)", async () => {
     enqueue("d1");
     const { legs, rec } = fakeLegs();
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(rec.build[0]?.surface).toBeUndefined(); // null column → undefined, not null
     expect(rec.build[0]?.skills).toBeUndefined();
@@ -191,7 +197,7 @@ describe("curation passthrough (ADR 0018/0019)", () => {
       tier: "strong",
     });
     const { legs, rec } = fakeLegs();
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(rec.build[0]?.tier).toBe("strong"); // the build leg resolves this → builderStrongAgent
   });
@@ -201,7 +207,7 @@ describe("build that changes nothing (no-op, ADR 0023 row 1)", () => {
   it("re-prompts ONCE, then parks (reason no-op) — never terminal failed, never reaches review", async () => {
     enqueue("d1");
     const { legs, rec } = fakeLegs({ changed: false }); // every build is a no-op
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     const d = repo.get("d1");
     expect(d?.state).toBe("escalated"); // parked, NOT failed
@@ -227,7 +233,7 @@ describe("build that changes nothing (no-op, ADR 0023 row 1)", () => {
         tokens: { input: 10, output: 5 },
       };
     };
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(calls).toBe(2);
     expect(repo.get("d1")?.state).toBe("done");
@@ -241,7 +247,7 @@ describe("crash recovery", () => {
     repo.transition("d1", "building");
     const { legs, rec } = fakeLegs();
 
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(repo.get("d1")?.state).toBe("done");
     expect(rec.build).toHaveLength(1);
@@ -253,7 +259,7 @@ describe("crash recovery", () => {
     repo.transition("d1", "review");
     const { legs, rec } = fakeLegs();
 
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(repo.get("d1")?.state).toBe("done");
     expect(rec.build).toHaveLength(0);
@@ -273,7 +279,7 @@ describe("session-main merge (ADR 0020)", () => {
       sessionBranch: "session-main-S1",
     });
     const { legs, rec } = fakeLegs({ reviewVerdicts: ["clean"] });
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(repo.get("d1")?.state).toBe("done");
     expect(rec.merge).toHaveLength(1);
@@ -283,7 +289,7 @@ describe("session-main merge (ADR 0020)", () => {
   it("does not merge when the dispatch has no session-main branch (legacy build-off-main)", async () => {
     enqueue("d1"); // no sessionBranch
     const { legs, rec } = fakeLegs({ reviewVerdicts: ["clean"] });
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(repo.get("d1")?.state).toBe("done");
     expect(rec.merge).toHaveLength(0);
@@ -299,7 +305,7 @@ describe("session-main merge (ADR 0020)", () => {
       sessionBranch: "session-main-S1",
     });
     const { legs, rec } = fakeLegs({ reviewVerdicts: ["blocking", "clean"] });
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(rec.merge).toHaveLength(1); // once, after the clean re-review — not on the blocking pass
   });
@@ -312,7 +318,7 @@ describe("parked dispatches", () => {
     repo.escalate("d1", "attended");
     const { legs, rec } = fakeLegs();
 
-    const driven = await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    const driven = await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(driven).toBe(0);
     expect(repo.get("d1")?.state).toBe("escalated");
@@ -330,7 +336,7 @@ describe("build timeout (ADR 0020 robustness)", () => {
       throw new AgentTimeoutError("ses_build", 120_000, "idle");
     };
 
-    const driven = await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    const driven = await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(driven).toBe(1); // handled, the loop survived
     const d = repo.get("d1");
@@ -346,7 +352,7 @@ describe("fault isolation (leg error, ADR 0023 row 2)", () => {
     enqueue("good", { id: "GOOD", title: "Works", body: "fine" });
     const { legs } = fakeLegs({ buildThrowsFor: "BAD" });
 
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     const bad = repo.get("bad");
     expect(bad?.state).toBe("escalated"); // parked, NOT terminal failed
@@ -361,7 +367,7 @@ describe("the amend cycle", () => {
     enqueue("d1");
     const { legs, rec } = fakeLegs({ reviewVerdicts: ["clean"] });
 
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(repo.get("d1")?.state).toBe("done");
     expect(repo.get("d1")?.amendRounds).toBe(0);
@@ -372,7 +378,7 @@ describe("the amend cycle", () => {
     enqueue("d1");
     const { legs, rec } = fakeLegs({ reviewVerdicts: ["blocking", "clean"] });
 
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     const d = repo.get("d1");
     expect(d?.state).toBe("done");
@@ -390,7 +396,7 @@ describe("the amend cycle", () => {
     // blocking through the cap: review → amend → review → amend → review(blocking, cap hit)
     const { legs, rec } = fakeLegs({ reviewVerdicts: ["blocking", "blocking", "blocking"] });
 
-    await new DispatchDaemon(repo, cap2, legs).runOnce();
+    await new DispatchDaemon(repo, cap2, legs, fakeReconcile).runOnce();
 
     const d = repo.get("d1");
     expect(d?.state).toBe("escalated");
@@ -404,7 +410,7 @@ describe("the amend cycle", () => {
     enqueue("d1");
     const { legs, rec } = fakeLegs({ reviewVerdicts: ["blocking"], amendChanges: false });
 
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     const d = repo.get("d1");
     expect(d?.state).toBe("escalated");
@@ -422,7 +428,7 @@ describe("the amend cycle", () => {
     repo.transition("d1", "amending"); // an amend was in flight when the daemon died
     const { legs, rec } = fakeLegs({ reviewVerdicts: ["clean"] });
 
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(repo.get("d1")?.state).toBe("done");
     expect(rec.build).toHaveLength(0);
@@ -453,7 +459,7 @@ describe("owner-review reopen", () => {
     seedDone("d1");
     const { legs, rec } = fakeLegs();
 
-    const driven = await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    const driven = await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(driven).toBe(0); // parked like escalated — skipped, not counted
     expect(repo.get("d1")?.state).toBe("done");
@@ -466,7 +472,7 @@ describe("owner-review reopen", () => {
     expect(repo.get("d1")?.state).toBe("amending");
     const { legs, rec } = fakeLegs({ reviewVerdicts: ["clean"] });
 
-    const driven = await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    const driven = await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     expect(driven).toBe(1);
     const d = repo.get("d1");
@@ -485,7 +491,7 @@ describe("owner-review reopen", () => {
     repo.reopenForReview("d1", "please rethink the whole approach");
     const { legs, rec } = fakeLegs({ amendChanges: false });
 
-    await new DispatchDaemon(repo, CONFIG, legs).runOnce();
+    await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
 
     const d = repo.get("d1");
     expect(d?.state).toBe("escalated");

@@ -119,11 +119,26 @@ export interface SessionStatus {
   escalations: ParkedEscalation[];
 }
 
+/** A feature's real spend, reconciled from the dispatch registry (ADR 0026). The per-leg sums
+ *  are the gateway-recorded cost the daemon wrote per dispatch. `window` is the time span the
+ *  chief's (non-dispatch) spend is attributed over — `[feature.createdAt, last activity]`,
+ *  anchored at feature creation so it captures the chief's planning spend, which happens BEFORE
+ *  any dispatch exists. The chief total itself is NOT here: it comes from the spend ledger (not a
+ *  repository), so the composition root (fleet-status CLI) reconciles it over this window and the
+ *  service stays repository-only (ADR 0017). */
+export interface FeatureCost {
+  buildUsd: number;
+  reviewUsd: number;
+  amendUsd: number;
+  window: { start: number; end: number };
+}
+
 /** A feature's full status (ADR 0020): the feature, then its sessions, each with its chunks,
- *  readout, and escalations. */
+ *  readout, and escalations — plus its reconciled per-leg cost + chief-attribution window. */
 export interface FeatureStatus {
   feature: { id: string; title: string; state: FeatureState };
   sessions: SessionStatus[];
+  cost: FeatureCost;
 }
 
 /**
@@ -592,6 +607,14 @@ export class PlanDispatchService {
     const feature = this.plan.getFeature(featureId);
     if (!feature) throw new Error(`no feature ${featureId}`);
 
+    // Reconcile the feature's real per-leg cost and chief-attribution window as we walk its
+    // dispatches (ADR 0026). The window opens at feature creation (the chief plans before any
+    // dispatch row exists) and closes at the latest activity across the feature + its dispatches.
+    let buildUsd = 0;
+    let reviewUsd = 0;
+    let amendUsd = 0;
+    let windowEnd = feature.updatedAt;
+
     const sessions = this.plan.listSessions(featureId).map((session) => {
       const chunks = this.plan.listChunks(session.id);
 
@@ -602,6 +625,15 @@ export class PlanDispatchService {
         if (!c.dispatchId) continue;
         const d = this.dispatch.get(c.dispatchId);
         if (d) dispatchById.set(c.dispatchId, d);
+      }
+
+      // Accumulate the feature's real per-leg spend + extend the chief-attribution window to the
+      // latest dispatch activity (nulls count as 0 / are ignored — a leg that hasn't run is $0).
+      for (const d of dispatchById.values()) {
+        buildUsd += d.buildCostUsd ?? 0;
+        reviewUsd += d.reviewCostUsd ?? 0;
+        amendUsd += d.amendCostUsd ?? 0;
+        if (d.updatedAt > windowEnd) windowEnd = d.updatedAt;
       }
 
       const chunkStatuses: ChunkStatus[] = chunks.map((c) => ({
@@ -639,6 +671,7 @@ export class PlanDispatchService {
     return {
       feature: { id: feature.id, title: feature.title, state: feature.state },
       sessions,
+      cost: { buildUsd, reviewUsd, amendUsd, window: { start: feature.createdAt, end: windowEnd } },
     };
   }
 

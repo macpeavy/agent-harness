@@ -38,13 +38,24 @@ set -a; source .env; set +a
 ./scripts/verify-gateway.sh           # health + a completion on each route
 ```
 
+### Cost of record — the spend ledger (ADR 0026)
+
+LiteLLM computes the real cost of every call. The `litellm_spend_logger.py` callback (wired in
+`litellm.yaml` via `litellm_settings.callbacks`) appends each call's real cost + route to a JSONL
+ledger at `.substrate/litellm-spend.jsonl` (override with `AH_SPEND_LEDGER`). The substrate reads
+it (`src/dispatch/litellm-spend.ts`) and reconciles **real** per-route spend over a time window —
+so a feature's recorded cost is real LiteLLM numbers for every leg (build/review/amend) **and**
+the chief, not token-count estimation. `make status` shows the per-feature TOTAL with the chief
+counted. The ledger is the cost signal for AGENT-9.
+
 ### The $25 hard cap
 
-Cross-request budget enforcement and the persistent spend dashboard need a database
-(`DATABASE_URL`, Postgres). For the spike we keep it DB-less and enforce the hard
-ceiling **at the OpenRouter key**: create a key with a **$25 credit limit** in the
-OpenRouter dashboard. LiteLLM still logs per-request cost (the AGENT-9 cost signal);
-add the DB later if we want the LiteLLM UI.
+The ledger is logging, **not** a budget gate. Cross-request hard-budget enforcement and the
+persistent LiteLLM spend dashboard need a database (`DATABASE_URL`) — and LiteLLM's Prisma store
+is Postgres-only (its schema hardcodes `provider = "postgresql"`; SQLite is not an option there).
+For the spike we keep it DB-less and enforce the hard ceiling **at the OpenRouter key**: create a
+key with a **$25 credit limit** in the OpenRouter dashboard. The runtime budget guard is a later
+PR (AGENT-43) on top of the ledger.
 
 ### Env
 
