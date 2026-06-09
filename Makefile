@@ -46,7 +46,7 @@ LOADENV := set -a; source .env; set +a;
 # proportionally on attach, ballooning the strip. tput reads the terminal `make up` runs in.
 SIZE := -x $$(tput cols 2>/dev/null || echo 200) -y $$(tput lines 2>/dev/null || echo 50)
 
-.PHONY: up down gateway daemon session-loop chief check migrate db abandon
+.PHONY: up down gateway daemon session-loop chief check migrate db abandon gate-builder
 
 up: migrate
 	@if tmux has-session -t $(SESSION) 2>/dev/null; then \
@@ -90,6 +90,12 @@ migrate:
 abandon:
 	@test -n "$(FEATURE)" || { echo "usage: make abandon FEATURE=<featureId>"; exit 1; }
 	bash -c '$(LOADENV) bun run src/cli/abandon.ts $(FEATURE)'
+
+# Builder-acceptance gate (ADR 0025): drive the real build leg against a canned write-required
+# chunk and prove the model produces a typechecking diff under budget. ROUTE defaults to builder.
+# A model only ships as the builder with a recorded green run. Needs the gateway up.
+gate-builder:
+	bash -c '$(LOADENV) bun run src/cli/gate-builder.ts $(ROUTE)'
 
 check:
 	bun run typecheck

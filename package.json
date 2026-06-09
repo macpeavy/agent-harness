@@ -15,6 +15,7 @@
     "migrate": "bun run src/substrate/migrate.ts",
     "reap": "bun run src/cli/reap.ts",
     "abandon": "bun run src/cli/abandon.ts",
+    "gate-builder": "bun run src/cli/gate-builder.ts",
     "substrate": "bun run src/index.ts",
     "db:generate": "drizzle-kit generate"
   },

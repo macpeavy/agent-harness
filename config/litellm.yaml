@@ -7,15 +7,16 @@
 # Listens on http://localhost:4000 by default.
 
 model_list:
-  # ── Cheap builder seat (primary): Mistral Small 4 (mistral-small-2603). $0.15 / $0.60
-  #    per M, 262K ctx. EU-governed (France) — the data-governance default. Native
-  #    tool-calling confirmed through OpenCode + LiteLLM in the AGENT-17 probe (single
-  #    + multi-step writes, ~$0.002/build, well under the deepseek ~$0.005 baseline).
-  #    DeepSeek (deepseek-v4-flash) and qwen3-coder were REMOVED on governance grounds
-  #    (China-origin; National Intelligence Law). See research note + docs/spike-results.md.
+  # ── Cheap builder seat (primary): gemini-2.5-flash-lite. $0.10 / $0.40 per M, 1M ctx.
+  #    Google/US — Western-governed. Replaced Mistral Small 4, which no-op'd three dogfoods
+  #    (50 turns, zero file edits — a tool-calling/capability failure, not tuning; ADR 0025).
+  #    Ships only with a recorded green `make gate-builder` (the acceptance gate, ADR 0025).
+  #    DeepSeek + qwen3-coder were removed earlier on governance grounds (China-origin;
+  #    National Intelligence Law). Step-ups if Flash-Lite disappoints under load: Gemini 2.5
+  #    Flash ($0.30/$2.50), then Claude Haiku 4.5 ($1/$5, known-good tool-caller).
   - model_name: builder
     litellm_params:
-      model: openrouter/mistralai/mistral-small-2603
+      model: openrouter/google/gemini-2.5-flash-lite
       api_key: os.environ/OPENROUTER_API_KEY
 
   # ── Validated Western alternates (AGENT-17 probe — both tool-call cleanly; available
