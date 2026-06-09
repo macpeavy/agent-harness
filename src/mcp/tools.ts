@@ -7,6 +7,7 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type {
   AddressReviewResult,
+  BuildDirectInput,
   Decomposed,
   FeatureStatus,
   OwnerReviewComment,
@@ -145,6 +146,21 @@ export function renderDecomposed(d: Decomposed): string {
 /** `decompose` — write a session's chunk-DAG to the plan (pass 2; validated; plan-only). */
 export function runDecompose(service: PlanDispatchService, input: DecomposeInput): CallToolResult {
   return guard(() => text(renderDecomposed(service.decompose(input))));
+}
+
+/** `build_direct` — the small-feature path (ADR 0026 decision 4): write the feature as ONE
+ *  session + ONE chunk, no decomposition. Plan-only — dispatch stays the separate owner gate. */
+export function runBuildDirect(service: PlanDispatchService, input: BuildDirectInput): CallToolResult {
+  return guard(() => {
+    const { featureId, sessionId, chunkId } = service.buildDirect(input);
+    const tier = input.chunk.tierHint ?? "cheap";
+    return text(
+      `Build-direct: feature ${featureId} written as ONE chunk ${chunkId} in session ${sessionId} ` +
+        `(${tier} tier, no decomposition pass — one builder + one review).\n` +
+        `Plan written. Present it and ask the owner to proceed — call dispatch only on their ` +
+        `explicit go (dispatching is approving).`,
+    );
+  });
 }
 
 /** The `add_chunk` tool's input — one chunk to add to an existing session, plus optional
