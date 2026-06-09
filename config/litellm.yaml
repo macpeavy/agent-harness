@@ -31,6 +31,19 @@ model_list:
       model: openrouter/google/gemini-2.5-flash-lite
       api_key: os.environ/OPENROUTER_API_KEY
 
+  # Prompt caching for the strong (Anthropic) seats (ADR 0026 decision 3). These three routes
+  # re-send a large stable prefix every call — review was 3.2× the builder, largely re-reads.
+  # LiteLLM's anthropic_cache_control_hook injects `cache_control` at the points below; the chain
+  # forwards it (LiteLLM → OpenRouter → Anthropic), which bills a cached prefix at ~0.1× on reads
+  # (5-min TTL, refreshed on hit). Two breakpoints:
+  #   - role: system → caches the stable persona/standards prefix, SHARED across every call in the
+  #     window (e.g. every review in a session — same system prompt, different diffs).
+  #   - index: -1    → caches the whole conversation-so-far each turn, so an agentic loop's growing
+  #     re-reads (the reviewer runs `git diff` + reads files) hit cache on the next turn.
+  # The reviewer is CACHED, not demoted (ADR 0026 alternatives) — same Sonnet, same prompt. The
+  # cheap builders (Haiku/Gemini/nano) are intentionally absent: provider-implicit caching, a
+  # different mechanism, out of scope.
+  #
   # ── Strong builder seat: the builder persona on the strong route (ADR 0013/0014) — for a
   #    tier-hinted (gnarly) chunk or a tier-promoted escalation. Sonnet; "strong build" is a
   #    routing choice, not a new persona (same builder.md, stronger model). ~$3 / $15 per M.
@@ -38,12 +51,22 @@ model_list:
     litellm_params:
       model: openrouter/anthropic/claude-sonnet-4.6
       api_key: os.environ/OPENROUTER_API_KEY
+      cache_control_injection_points:
+        - location: message
+          role: system
+        - location: message
+          index: -1
 
   # ── Strong reviewer seat. ~$3 / $15 per M tokens.
   - model_name: reviewer
     litellm_params:
       model: openrouter/anthropic/claude-sonnet-4.6
       api_key: os.environ/OPENROUTER_API_KEY
+      cache_control_injection_points:
+        - location: message
+          role: system
+        - location: message
+          index: -1
 
   # ── Chief seat (strong): Sonnet — the decomposition / cost engine (ADR 0019). The
   #    expensive reasoner whose decomposition buys cheap building; same upstream as the
@@ -53,6 +76,11 @@ model_list:
     litellm_params:
       model: openrouter/anthropic/claude-sonnet-4.6
       api_key: os.environ/OPENROUTER_API_KEY
+      cache_control_injection_points:
+        - location: message
+          role: system
+        - location: message
+          index: -1
 
 litellm_settings:
   # Drop params a given upstream doesn't support rather than 400-ing — keeps the

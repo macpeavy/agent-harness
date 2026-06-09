@@ -16,6 +16,8 @@ The model spine. Routes via OpenRouter (the live set; see `litellm.yaml` for pri
 
 (The original `qwen`/`deepseek` cheap routes were removed on data-governance grounds — China-origin, National Intelligence Law; see `litellm.yaml`.)
 
+**Prompt caching (ADR 0026).** The three Anthropic seats (`chief`, `reviewer`, `builder-strong`) carry `cache_control_injection_points` — LiteLLM injects `cache_control` on the system message and the last message, so the large stable prefix bills at ~0.1× on a cache read (5-min TTL). Probed live: a repeated 2.8K-token prefix dropped from $0.0108 to $0.0010 per call (10.6×). The cheap builders are intentionally excluded (provider-implicit caching, a different mechanism). The reviewer is cached, not demoted.
+
 ### Run it
 
 ```bash
