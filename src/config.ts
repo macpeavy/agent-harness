@@ -6,7 +6,6 @@
 // does not reach for process.env (ADR 0017).
 
 import { $ } from "bun";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export interface SubstrateConfig {
@@ -25,10 +24,14 @@ export interface SubstrateConfig {
   reviewerAgent: string;
   /** Max amend rounds before a dispatch escalates (ADR 0008). Default 3. */
   amendCap: number;
-  /** Ceiling (ms) for a single agent turn — the build/review/amend model call. A real chunk
-   *  build on the cheap tier (Mistral reading a full context pack) is far slower than a toy
-   *  util, so this is generous; on timeout the dispatch escalates cleanly (ADR 0020). Default
-   *  10 min. */
+  /** Idle window (ms) for an agent turn — abort if the session produces no new activity for this
+   *  long (a hang). NOT a total-duration cap: a slow-but-progressing build keeps resetting it, so
+   *  it isn't killed for being slow (AGENT-38). On abort the dispatch escalates (ADR 0023 row 3).
+   *  Default 2 min. */
+  agentIdleMs: number;
+  /** Absolute backstop (ms) for an agent turn — kills a runaway session even while it keeps
+   *  producing, so a stuck-but-noisy loop can't bill forever. Generous; the idle window is the
+   *  usual stop. Default 30 min. */
   agentTimeoutMs: number;
 }
 
@@ -64,11 +67,16 @@ export async function loadConfig(): Promise<SubstrateConfig> {
   return {
     repoPath,
     ghRepo,
-    worktreeRoot: process.env.AH_WORKTREE_ROOT ?? join(tmpdir(), "ah-worktrees"),
+    // Worktrees live INSIDE the repo (.worktrees/, gitignored) — NOT a /tmp path. A worktree
+    // outside the OpenCode project root makes every agent edit fire an `external_directory: ask`
+    // permission prompt a headless build can't answer, so it hangs to the timeout (AGENT-38, the
+    // money-burner). In-project edits need no such prompt. AH_WORKTREE_ROOT still overrides.
+    worktreeRoot: process.env.AH_WORKTREE_ROOT ?? join(repoPath, ".worktrees"),
     builderAgent: process.env.AH_BUILDER_AGENT ?? "builder",
     builderStrongAgent: process.env.AH_BUILDER_STRONG_AGENT ?? "builder-strong",
     reviewerAgent: process.env.AH_REVIEWER_AGENT ?? "reviewer",
     amendCap: intFromEnv(process.env.AH_AMEND_CAP, 3),
-    agentTimeoutMs: intFromEnv(process.env.AH_AGENT_TIMEOUT_MS, 600_000),
+    agentIdleMs: intFromEnv(process.env.AH_AGENT_IDLE_MS, 120_000),
+    agentTimeoutMs: intFromEnv(process.env.AH_AGENT_TIMEOUT_MS, 1_800_000),
   };
 }

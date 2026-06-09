@@ -108,8 +108,11 @@ export async function runBuildLeg(
       title: `build ${issue.id}`,
       agent,
       prompt,
-      mode: "sync",
-      timeoutMs: config.agentTimeoutMs,
+      // Idle-polling drive (AGENT-38): a slow-but-progressing build isn't killed on a wall-clock;
+      // a hang aborts after the idle window, the runaway backstop is the absolute cap.
+      mode: "wake",
+      idleMs: config.agentIdleMs,
+      absoluteMs: config.agentTimeoutMs,
     });
 
     // 3. Did the builder actually change anything?
