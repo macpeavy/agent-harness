@@ -31,6 +31,9 @@ SESSION ?= agent-harness
 # Height (lines) of the top gateway+daemon log strip. 0 = hide them in a separate tmux
 # window so the chief fills the whole window (switch to them with Ctrl-b 1).
 LOGS_HEIGHT ?= 6
+# Width of the live status pane — a narrow left column beside the chief (the compact card view
+# fits ~20%). A percentage or a column count; tmux 3.1+ accepts `N%`.
+STATUS_WIDTH ?= 20%
 
 # Panes drop to a shell when their process exits, so a crash/Ctrl-C leaves the logs (and a
 # prompt to restart) visible instead of vanishing.
@@ -52,18 +55,18 @@ up: migrate
 	@if tmux has-session -t $(SESSION) 2>/dev/null; then \
 		echo "session '$(SESSION)' already up — attaching"; \
 	elif [ "$(LOGS_HEIGHT)" -eq 0 ]; then \
-		tmux new-session -d $(SIZE) -s $(SESSION) -n chief 'make chief; $(HOLD)'; \
+		chief=$$(tmux new-session -d -P -F '#{pane_id}' $(SIZE) -s $(SESSION) -n chief 'make chief; $(HOLD)'); \
+		tmux split-window -h -b -l $(STATUS_WIDTH) -t $$chief 'make status-watch; $(HOLD)'; \
 		tmux new-window -d -t $(SESSION) -n logs 'make gateway; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION):logs 'make daemon; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION):logs 'make session-loop; $(HOLD)'; \
-		tmux split-window -h -t $(SESSION):chief 'make status-watch; $(HOLD)'; \
-		tmux select-pane -t $(SESSION):chief.0; \
+		tmux select-pane -t $$chief; \
 	else \
 		chief=$$(tmux new-session -d -P -F '#{pane_id}' $(SIZE) -s $(SESSION) -n stack 'make chief; $(HOLD)'); \
 		tmux split-window -v -b -l $(LOGS_HEIGHT) -t $$chief 'make gateway; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION) 'make daemon; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION) 'make session-loop; $(HOLD)'; \
-		tmux split-window -h -t $$chief 'make status-watch; $(HOLD)'; \
+		tmux split-window -h -b -l $(STATUS_WIDTH) -t $$chief 'make status-watch; $(HOLD)'; \
 		tmux select-pane -t $$chief; \
 	fi
 	@tmux attach -t $(SESSION)

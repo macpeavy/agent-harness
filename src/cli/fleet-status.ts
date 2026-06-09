@@ -15,146 +15,81 @@ import { ledgerPath, readSpendLedger, spendInWindow } from "../dispatch/litellm-
  *  renderer stays I/O-free: the CLI reads the ledger and hands the answer in. */
 export type ChiefCostByFeature = Map<string, number | null>;
 
+// The compact pane fits a narrow (~20%-width) tmux column, so the render targets a fixed small
+// width and truncates to it — wide 80-col lines wrapped into mush in the pane (the owner's note).
+const WIDTH = 34;
+const RULE = "─".repeat(WIDTH);
+
 function trunc(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
 }
 
-function usd(n: number): string {
-  return `$${n.toFixed(4)}`;
+/** Compact money — cents precision is enough at a glance (the pane is for scanning, not auditing;
+ *  `make status` / the chief's tool carry the 4-dp figures). */
+function money(n: number): string {
+  return `$${n.toFixed(2)}`;
+}
+
+function featureTotal(f: FeatureStatus, chiefCost: ChiefCostByFeature): number {
+  const legs = f.cost.buildUsd + f.cost.reviewUsd + f.cost.amendUsd;
+  return legs + (chiefCost.get(f.feature.id) ?? 0);
 }
 
 /**
- * Pure render — takes the data, returns a string. No I/O.
- * Tested directly by fleet-status.test.ts without touching the DB.
+ * Pure render — takes the data, returns a string. No I/O. Tested directly by fleet-status.test.ts.
  *
- * `chiefCost` carries the chief's reconciled spend per feature (the CLI reads it from the spend
- * ledger; null = unmeasurable). The per-feature cost line distinguishes the TOTAL (chief + legs)
- * from the per-leg breakdown (ADR 0026) — the chief is counted, not invisible.
+ * A compact card per ACTIVE feature (abandoned ones collapse to a count), sized for the narrow
+ * watch pane: id, a budget-park alert when tripped, the lead session's state/PR/LOC, and a
+ * one-line chunk tally + the real TOTAL cost (chief + legs, ADR 0026). `chiefCost` is the chief's
+ * reconciled spend per feature (the CLI reads it from the ledger; null counts as 0 here).
  */
 export function renderFleet(
   statuses: FeatureStatus[],
   now = new Date().toISOString(),
   chiefCost: ChiefCostByFeature = new Map(),
 ): string {
-  const lines: string[] = [];
+  if (statuses.length === 0) return "fleet · (no features)";
 
-  lines.push(`Fleet status — ${now}`);
+  const grand = statuses.reduce((sum, f) => sum + featureTotal(f, chiefCost), 0);
+  const active = statuses.filter((f) => f.feature.state !== "abandoned");
+  const abandoned = statuses.length - active.length;
 
-  if (statuses.length === 0) {
-    lines.push("(no features)");
-    return lines.join("\n");
-  }
+  const lines: string[] = [`fleet · ${money(grand)} total`, ""];
 
-  let totalChunks = 0;
-  let totalSessions = 0;
-  let aggregateDone = 0;
-  let aggregateEscalated = 0;
-  let aggregateFailed = 0;
-  let aggregateInFlight = 0;
-  let aggregateCheapAble = 0;
-  let aggregateTotalCost = 0;
-  let aggregateChiefCost = 0;
+  for (const f of active) {
+    lines.push(`● ${trunc(f.feature.id, WIDTH - 2)}`);
 
-  for (const feature of statuses) {
-    lines.push("");
-    const stateAndId = `[${feature.feature.state}] ${feature.feature.id} — "`;
-    const budgetSuffix = feature.feature.budgetUsd !== null ? `  budget ${usd(feature.feature.budgetUsd)}` : "";
-    const availableForTitle = 80 - stateAndId.length - 1 - budgetSuffix.length;
-    const featureTitle = trunc(feature.feature.title, Math.max(10, availableForTitle));
-    let featureLine = `${stateAndId}${featureTitle}"${budgetSuffix}`;
-    if (featureLine.length > 80) {
-      featureLine = featureLine.slice(0, 79);
-    }
-    lines.push(featureLine);
-
-    for (const sessionStatus of feature.sessions) {
-      const session = sessionStatus.session;
-      totalSessions++;
-
-      let sessionLine = `  ${session.id} [${session.state}]`;
-      if (session.prNumber != null) {
-        sessionLine += `  PR #${session.prNumber}`;
-      }
-      if (session.locEstimate != null) {
-        sessionLine += `  ~${session.locEstimate} LOC`;
-      }
-      if (sessionLine.length > 80) {
-        const sessionId = trunc(session.id, 30);
-        sessionLine = `  ${sessionId} [${session.state}]`;
-        if (session.prNumber != null) {
-          sessionLine += `  PR #${session.prNumber}`;
-        }
-        if (session.locEstimate != null) {
-          sessionLine += `  ~${session.locEstimate} LOC`;
-        }
-      }
-      if (sessionLine.length > 80) {
-        sessionLine = sessionLine.slice(0, 79);
-      }
-      lines.push(sessionLine);
-
-      if (session.budgetExceededUsd !== null) {
-        const budgetPart =
-          feature.feature.budgetUsd !== null ? ` / budget ${usd(feature.feature.budgetUsd)}` : "";
-        let budgetMarker = `  BUDGET-parked: spent ${usd(session.budgetExceededUsd)}${budgetPart} — raise / ship-partial / abandon`;
-        if (budgetMarker.length > 80) {
-          budgetMarker = budgetMarker.slice(0, 79);
-        }
-        lines.push(budgetMarker);
-      }
-
-      for (const chunk of sessionStatus.chunks) {
-        totalChunks++;
-        const dispatchStateStr = chunk.dispatchState ?? "-";
-        const prefix = `    `;
-        const suffix = `  [${chunk.state}]  dispatch: ${dispatchStateStr}`;
-        const availableSpace = 80 - prefix.length - suffix.length;
-        const chunkIdSpace = Math.floor(availableSpace * 0.4);
-        const surfaceSpace = availableSpace - chunkIdSpace - 2;
-        const chunkId = trunc(chunk.id, chunkIdSpace);
-        const surface = trunc(chunk.surface, surfaceSpace);
-        const chunkLine = `${prefix}${chunkId}  ${surface}${suffix}`;
-        lines.push(chunkLine.length > 80 ? chunkLine.slice(0, 79) : chunkLine);
-      }
-
-      const readout = sessionStatus.readout;
-      aggregateDone += readout.reachedReady;
-      aggregateEscalated += readout.escalated;
-      aggregateFailed += readout.failed;
-      aggregateInFlight += readout.inFlight;
-      aggregateCheapAble += readout.reachedReady;
-
-      const terminalCount = readout.reachedReady + readout.escalated + readout.failed;
-      const totalReadout = terminalCount + readout.inFlight;
-      const readoutLine =
-        `  done ${readout.reachedReady} / esc ${readout.escalated} / fail ${readout.failed} / in-flight ${readout.inFlight}  ` +
-        `cheap-able ${readout.cheapAbleFraction.toFixed(2)}  $${readout.blendedCostPerReadyUsd.toFixed(4)}`;
-      lines.push(readoutLine);
+    // Budget-park alert (ADR 0026) — highlighted at the top of the card so an overspend that needs
+    // a decision (raise / ship-partial / abandon) is the first thing the eye lands on.
+    const parked = f.sessions.find((s) => s.session.budgetExceededUsd !== null);
+    if (parked) {
+      const bud = f.feature.budgetUsd !== null ? `/${money(f.feature.budgetUsd)}` : "";
+      lines.push(`  ⚠ BUDGET ${money(parked.session.budgetExceededUsd!)}${bud}`);
+      lines.push(`  raise / ship / abandon`);
     }
 
-    // The per-feature cost line (ADR 0026): the TOTAL counts the chief, then breaks out chief vs
-    // the per-leg spend so total and per-leg are never conflated. chief = null → "n/a" (the spend
-    // ledger isn't populated), distinct from $0.0000 (ledger present, no chief calls in window).
-    const c = feature.cost;
-    const legsUsd = c.buildUsd + c.reviewUsd + c.amendUsd;
-    const chief = chiefCost.get(feature.feature.id) ?? null;
-    aggregateTotalCost += legsUsd;
-    aggregateChiefCost += chief ?? 0;
-    const featureTotal = legsUsd + (chief ?? 0);
-    lines.push(`  cost: TOTAL ${usd(featureTotal)}  (chief ${chief === null ? "n/a" : usd(chief)} + legs ${usd(legsUsd)})`);
-    lines.push(`        legs: build ${usd(c.buildUsd)} / review ${usd(c.reviewUsd)} / amend ${usd(c.amendUsd)}`);
+    // Lead session: the one with a PR (the reviewable unit), else the first. Its state is the most
+    // informative (e.g. `review` = awaiting the owner) — falls back to the feature state.
+    const lead = f.sessions.find((s) => s.session.prNumber != null) ?? f.sessions[0];
+    let stateLine = `  ${lead?.session.state ?? f.feature.state}`;
+    if (lead?.session.prNumber != null) stateLine += ` · PR #${lead.session.prNumber}`;
+    if (lead?.session.locEstimate != null) stateLine += ` · ~${lead.session.locEstimate}L`;
+    lines.push(trunc(stateLine, WIDTH));
+
+    let done = 0;
+    let failed = 0;
+    let esc = 0;
+    for (const s of f.sessions) {
+      done += s.readout.reachedReady;
+      failed += s.readout.failed;
+      esc += s.readout.escalated;
+    }
+    lines.push(`  ✓${done} ✗${failed} ⚠${esc} · ${money(featureTotal(f, chiefCost))}`);
+    lines.push(RULE);
   }
 
-  const aggregateTerminal = aggregateDone + aggregateEscalated + aggregateFailed;
-  const blendedCheapAble = aggregateTerminal > 0 ? aggregateDone / aggregateTerminal : 0;
-
-  lines.push("");
-  const grandTotal = aggregateTotalCost + aggregateChiefCost;
-  lines.push(
-    `Features: ${statuses.length}  Sessions: ${totalSessions}  Chunks: ${totalChunks}  ` +
-      `cheap-able ${blendedCheapAble.toFixed(2)} (blended)`,
-  );
-  lines.push(`Total ${usd(grandTotal)}  (chief ${usd(aggregateChiefCost)} + legs ${usd(aggregateTotalCost)})`);
+  if (abandoned > 0) lines.push(`  …${abandoned} abandoned (hidden)`);
+  lines.push(`updated ${now.slice(11, 19)}`); // HH:MM:SS — confirms the watch pane is live
 
   return lines.join("\n");
 }
