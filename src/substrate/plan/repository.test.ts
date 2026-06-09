@@ -334,3 +334,33 @@ describe("planning-amendable: revise + prune (ADR 0020 §5b)", () => {
     expect(() => plan.removeEdge("x", "y")).toThrow("no edge x->y");
   });
 });
+
+// --- sessions ---
+
+describe("listAllFeatures", () => {
+  it("returns an empty array when no features exist", () => {
+    expect(plan.listAllFeatures()).toEqual([]);
+  });
+
+  it("returns a single feature when one is added", () => {
+    plan.createFeature(FEATURE);
+    expect(plan.listAllFeatures()).toEqual([
+      expect.objectContaining({ id: FEATURE.id, title: FEATURE.title, description: FEATURE.description }),
+    ]);
+  });
+
+  it("returns multiple features ordered by creation time", async () => {
+    const feature1 = { ...FEATURE, id: "F1" };
+    const feature2 = { ...FEATURE, id: "F2" };
+    const feature3 = { ...FEATURE, id: "F3" };
+
+    plan.createFeature(feature1);
+    // simulate a small delay to ensure createdAt is different
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    plan.createFeature(feature2);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    plan.createFeature(feature3);
+
+    expect(plan.listAllFeatures().map((f) => f.id)).toEqual(["F1", "F2", "F3"]);
+  });
+});

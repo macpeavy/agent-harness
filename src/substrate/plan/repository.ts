@@ -7,8 +7,8 @@
 // Two-level structure (ADR 0020): features → sessions → chunks (+ edges within a session).
 // Queries go through Drizzle's typed query builder — no hand-written SQL strings. The
 // state machines and domain types live in ./model; the tables in ./schema.
-
-import { Database } from "bun:sqlite";
+//
+// import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
@@ -215,6 +215,7 @@ export class PlanRepository {
   listAllFeatures(): Feature[] {
     return this.db.select().from(features).orderBy(asc(features.createdAt)).all();
   }
+
   // --- sessions ---
 
   /**
