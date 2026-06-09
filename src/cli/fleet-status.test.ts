@@ -1,377 +1,114 @@
 import { describe, expect, it } from "bun:test";
 import { renderFleet, type ChiefCostByFeature } from "./fleet-status";
-import type { FeatureStatus } from "../dispatch/plan-dispatch";
+import type { FeatureStatus, SessionStatus } from "../dispatch/plan-dispatch";
 
 const ZERO_COST: FeatureStatus["cost"] = { buildUsd: 0, reviewUsd: 0, amendUsd: 0, window: { start: 0, end: 100 } };
+const WIDTH = 34;
 
-describe("renderFleet", () => {
-  it("contains '(no features)' for an empty fleet", () => {
-    const output = renderFleet([]);
-    expect(output).toContain("(no features)");
+function session(over: Partial<SessionStatus["session"]> = {}): SessionStatus {
+  return {
+    session: {
+      id: "S1",
+      state: "building",
+      branch: null,
+      prNumber: null,
+      prUrl: null,
+      locEstimate: null,
+      lastError: null,
+      budgetExceededUsd: null,
+      ...over,
+    },
+    chunks: [],
+    readout: {
+      total: 0,
+      reachedReady: 0,
+      escalated: 0,
+      failed: 0,
+      inFlight: 0,
+      cheapAbleFraction: 0,
+      blendedCostPerReadyUsd: 0,
+      totalCostUsd: 0,
+      amendRoundsHistogram: {},
+    },
+    escalations: [],
+  };
+}
+
+function feature(over: {
+  id?: string;
+  state?: FeatureStatus["feature"]["state"];
+  budgetUsd?: number | null;
+  cost?: FeatureStatus["cost"];
+  sessions?: SessionStatus[];
+}): FeatureStatus {
+  return {
+    feature: { id: over.id ?? "feat-1", title: "T", state: over.state ?? "building", budgetUsd: over.budgetUsd ?? null },
+    cost: over.cost ?? ZERO_COST,
+    sessions: over.sessions ?? [],
+  };
+}
+
+describe("renderFleet (compact card layout)", () => {
+  it("renders '(no features)' for an empty fleet", () => {
+    expect(renderFleet([])).toBe("fleet · (no features)");
   });
 
-  it("starts with 'Fleet status — '", () => {
-    const output = renderFleet([]);
-    expect(output).toMatch(/^Fleet status — /);
+  it("headers with the grand total (chief + legs across all features)", () => {
+    const f = feature({ cost: { buildUsd: 0.4, reviewUsd: 0.06, amendUsd: 0, window: { start: 0, end: 1 } } });
+    const chief: ChiefCostByFeature = new Map([["feat-1", 0.05]]);
+    const out = renderFleet([f], undefined, chief);
+    expect(out).toContain("fleet · $0.51 total"); // 0.40 + 0.06 + 0.05 chief
   });
 
-  it("contains feature line with state, id, and title", () => {
-    const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: null },
-      cost: ZERO_COST,
-      sessions: [],
-    };
-    const output = renderFleet([mockStatus]);
-    expect(output).toContain("[building] feat-1");
-    expect(output).toContain("My Feature");
+  it("renders a card: bullet id, lead-session state/PR/LOC, and a chunk tally + total", () => {
+    const f = feature({
+      id: "fleet-status-budget-v2",
+      cost: { buildUsd: 0.47, reviewUsd: 0.06, amendUsd: 0, window: { start: 0, end: 1 } },
+      sessions: [session({ state: "review", prNumber: 133, locEstimate: 80, })],
+    });
+    // give the session a done chunk
+    f.sessions[0]!.readout.reachedReady = 1;
+    const out = renderFleet([f], undefined, new Map([["feat-1", 0]]));
+    expect(out).toContain("● fleet-status-budget-v2");
+    expect(out).toContain("review · PR #133 · ~80L");
+    expect(out).toContain("✓1 ✗0 ⚠0 · $0.53");
   });
 
-  it("contains session line with id, state, PR number, and LOC", () => {
-    const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: null },
-      cost: ZERO_COST,
-      sessions: [
-        {
-          session: {
-            id: "sess-1",
-            state: "building",
-            branch: null,
-            prNumber: 42,
-            prUrl: null,
-            locEstimate: 800,
-            lastError: null,
-            budgetExceededUsd: null,
-          },
-          chunks: [],
-          readout: {
-            total: 0,
-            reachedReady: 0,
-            escalated: 0,
-            failed: 0,
-            inFlight: 0,
-            cheapAbleFraction: 0,
-            blendedCostPerReadyUsd: 0,
-            totalCostUsd: 0,
-            amendRoundsHistogram: {},
-          },
-          escalations: [],
-        },
-      ],
-    };
-    const output = renderFleet([mockStatus]);
-    expect(output).toContain("sess-1 [building]");
-    expect(output).toContain("PR #42");
-    expect(output).toContain("~800 LOC");
+  it("highlights a BUDGET-parked feature with the alert + the decision line", () => {
+    const f = feature({
+      id: "big-feature",
+      budgetUsd: 10,
+      sessions: [session({ state: "needs-attention", budgetExceededUsd: 12.4 })],
+    });
+    const out = renderFleet([f]);
+    expect(out).toContain("⚠ BUDGET $12.40/$10.00");
+    expect(out).toContain("raise / ship / abandon");
   });
 
-  it("contains chunk line with id, surface, state, and dispatch state", () => {
-    const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: null },
-      cost: ZERO_COST,
-      sessions: [
-        {
-          session: {
-            id: "sess-1",
-            state: "building",
-            branch: null,
-            prNumber: 42,
-            prUrl: null,
-            locEstimate: 800,
-            lastError: null,
-            budgetExceededUsd: null,
-          },
-          chunks: [
-            {
-              id: "chunk-1",
-              surface: "src/foo.ts",
-              state: "done",
-              dispatchId: "chunk-1",
-              dispatchState: "done",
-            },
-          ],
-          readout: {
-            total: 1,
-            reachedReady: 1,
-            escalated: 0,
-            failed: 0,
-            inFlight: 0,
-            cheapAbleFraction: 1,
-            blendedCostPerReadyUsd: 0.002,
-            totalCostUsd: 0.002,
-            amendRoundsHistogram: {},
-          },
-          escalations: [],
-        },
-      ],
-    };
-    const output = renderFleet([mockStatus]);
-    expect(output).toContain("chunk-1");
-    expect(output).toContain("src/foo.ts");
+  it("collapses abandoned features to a count — no card for them", () => {
+    const out = renderFleet([
+      feature({ id: "active-one", sessions: [session()] }),
+      feature({ id: "dead-one", state: "abandoned", sessions: [session({ state: "abandoned" })] }),
+      feature({ id: "dead-two", state: "abandoned" }),
+    ]);
+    expect(out).toContain("● active-one");
+    expect(out).not.toContain("● dead-one");
+    expect(out).toContain("…2 abandoned (hidden)");
   });
 
-  it("contains readout line with done/esc/fail/in-flight counts and cheap-able", () => {
-    const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: null },
-      cost: ZERO_COST,
-      sessions: [
-        {
-          session: {
-            id: "sess-1",
-            state: "building",
-            branch: null,
-            prNumber: 42,
-            prUrl: null,
-            locEstimate: 800,
-            lastError: null,
-            budgetExceededUsd: null,
-          },
-          chunks: [
-            {
-              id: "chunk-1",
-              surface: "src/foo.ts",
-              state: "done",
-              dispatchId: "chunk-1",
-              dispatchState: "done",
-            },
-          ],
-          readout: {
-            total: 1,
-            reachedReady: 1,
-            escalated: 0,
-            failed: 0,
-            inFlight: 0,
-            cheapAbleFraction: 1,
-            blendedCostPerReadyUsd: 0.002,
-            totalCostUsd: 0.002,
-            amendRoundsHistogram: {},
-          },
-          escalations: [],
-        },
-      ],
-    };
-    const output = renderFleet([mockStatus]);
-    expect(output).toContain("done 1 / esc 0 / fail 0 / in-flight 0");
-    expect(output).toContain("cheap-able 1.00");
+  it("shows the time so the watch pane reads as live", () => {
+    const out = renderFleet([feature({ sessions: [session()] })], "2026-06-09T17:54:03.000Z");
+    expect(out).toContain("updated 17:54:03");
   });
 
-  it("contains footer with features, sessions, chunks counts", () => {
-    const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: null },
-      cost: ZERO_COST,
-      sessions: [
-        {
-          session: {
-            id: "sess-1",
-            state: "building",
-            branch: null,
-            prNumber: 42,
-            prUrl: null,
-            locEstimate: 800,
-            lastError: null,
-            budgetExceededUsd: null,
-          },
-          chunks: [
-            {
-              id: "chunk-1",
-              surface: "src/foo.ts",
-              state: "done",
-              dispatchId: "chunk-1",
-              dispatchState: "done",
-            },
-          ],
-          readout: {
-            total: 1,
-            reachedReady: 1,
-            escalated: 0,
-            failed: 0,
-            inFlight: 0,
-            cheapAbleFraction: 1,
-            blendedCostPerReadyUsd: 0.002,
-            totalCostUsd: 0.002,
-            amendRoundsHistogram: {},
-          },
-          escalations: [],
-        },
-      ],
-    };
-    const output = renderFleet([mockStatus]);
-    expect(output).toContain("Features: 1  Sessions: 1  Chunks: 1");
-  });
-
-  it("no line exceeds 80 characters", () => {
-    const mockStatus: FeatureStatus = {
-      feature: {
-        id: "feat-1",
-        title: "This is a very long feature title that should be truncated",
-        state: "building",
-        budgetUsd: null,
-      },
-      cost: { buildUsd: 1.2345, reviewUsd: 6.789, amendUsd: 0.5, window: { start: 0, end: 100 } },
-      sessions: [
-        {
-          session: {
-            id: "sess-1-with-a-very-long-name-that-should-be-truncated",
-            state: "building",
-            branch: null,
-            prNumber: 42,
-            prUrl: null,
-            locEstimate: 800,
-            lastError: null,
-            budgetExceededUsd: null,
-          },
-          chunks: [
-            {
-              id: "chunk-1-with-a-very-long-name",
-              surface: "src/very/deep/nested/long/path/foo.ts",
-              state: "done",
-              dispatchId: "chunk-1",
-              dispatchState: "done",
-            },
-          ],
-          readout: {
-            total: 1,
-            reachedReady: 1,
-            escalated: 0,
-            failed: 0,
-            inFlight: 0,
-            cheapAbleFraction: 1,
-            blendedCostPerReadyUsd: 0.002,
-            totalCostUsd: 0.002,
-            amendRoundsHistogram: {},
-          },
-          escalations: [],
-        },
-      ],
-    };
-    // Pass a chief cost too, so the cost line is rendered at its widest (chief present, not n/a).
-    const chiefCost: ChiefCostByFeature = new Map([["feat-1", 12.3456]]);
-    const output = renderFleet([mockStatus], undefined, chiefCost);
-    const lines = output.split("\n");
-    for (const line of lines) {
-      expect(line.length).toBeLessThanOrEqual(80);
+  it("no line exceeds the pane width (fits the narrow column)", () => {
+    const f = feature({
+      id: "a-really-long-feature-identifier-that-would-overflow-the-narrow-pane",
+      budgetUsd: 1234.5,
+      sessions: [session({ state: "needs-attention", prNumber: 99999, locEstimate: 4321, budgetExceededUsd: 9999.99 })],
+    });
+    for (const line of renderFleet([f]).split("\n")) {
+      expect(line.length).toBeLessThanOrEqual(WIDTH);
     }
-  });
-
-  it("uses pinned timestamp when provided", () => {
-    const timestamp = "2026-01-01T00:00:00.000Z";
-    const output = renderFleet([], timestamp);
-    expect(output).toContain(timestamp);
-  });
-
-  it("omits PR and LOC fields when null", () => {
-    const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: null },
-      cost: ZERO_COST,
-      sessions: [
-        {
-          session: {
-            id: "sess-1",
-            state: "building",
-            branch: null,
-            prNumber: null,
-            prUrl: null,
-            locEstimate: null,
-            lastError: null,
-            budgetExceededUsd: null,
-          },
-          chunks: [],
-          readout: {
-            total: 0,
-            reachedReady: 0,
-            escalated: 0,
-            failed: 0,
-            inFlight: 0,
-            cheapAbleFraction: 0,
-            blendedCostPerReadyUsd: 0,
-            totalCostUsd: 0,
-            amendRoundsHistogram: {},
-          },
-          escalations: [],
-        },
-      ],
-    };
-    const output = renderFleet([mockStatus]);
-    expect(output).not.toContain("PR #");
-    expect(output).not.toContain("LOC");
-  });
-
-  it("feature with budgetUsd displays budget on feature line", () => {
-    const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: 5.0 },
-      cost: ZERO_COST,
-      sessions: [],
-    };
-    const output = renderFleet([mockStatus]);
-    expect(output).toContain("budget $5.0000");
-  });
-
-  it("session with budgetExceededUsd displays BUDGET-parked marker with spent and budget amounts", () => {
-    const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: 5.0 },
-      cost: ZERO_COST,
-      sessions: [
-        {
-          session: {
-            id: "sess-1",
-            state: "building",
-            branch: null,
-            prNumber: null,
-            prUrl: null,
-            locEstimate: null,
-            lastError: null,
-            budgetExceededUsd: 3.5,
-          },
-          chunks: [],
-          readout: {
-            total: 0,
-            reachedReady: 0,
-            escalated: 0,
-            failed: 0,
-            inFlight: 0,
-            cheapAbleFraction: 0,
-            blendedCostPerReadyUsd: 0,
-            totalCostUsd: 0,
-            amendRoundsHistogram: {},
-          },
-          escalations: [],
-        },
-      ],
-    };
-    const output = renderFleet([mockStatus]);
-    expect(output).toContain("BUDGET-parked");
-    expect(output).toContain("spent $3.5000");
-    expect(output).toContain("budget $5.0000");
-    expect(output).toContain("raise / ship-partial / abandon");
-  });
-
-  describe("cost line (ADR 0026 — counting the chief)", () => {
-    const feature = (cost: FeatureStatus["cost"]): FeatureStatus => ({
-      feature: { id: "feat-1", title: "F", state: "building", budgetUsd: null },
-      cost,
-      sessions: [],
-    });
-
-    it("renders the TOTAL as chief + legs, and breaks out per-leg spend", () => {
-      const status = feature({ buildUsd: 0.01, reviewUsd: 0.03, amendUsd: 0.005, window: { start: 0, end: 100 } });
-      const chiefCost: ChiefCostByFeature = new Map([["feat-1", 0.5]]);
-      const output = renderFleet([status], undefined, chiefCost);
-      // TOTAL = chief 0.5 + legs (0.01+0.03+0.005=0.045) = 0.545
-      expect(output).toContain("cost: TOTAL $0.5450  (chief $0.5000 + legs $0.0450)");
-      expect(output).toContain("legs: build $0.0100 / review $0.0300 / amend $0.0050");
-      // footer grand total carries the chief separately
-      expect(output).toContain("Total $0.5450  (chief $0.5000 + legs $0.0450)");
-    });
-
-    it("shows chief n/a (not $0) when the ledger can't be measured", () => {
-      const status = feature({ buildUsd: 0.02, reviewUsd: 0, amendUsd: 0, window: { start: 0, end: 100 } });
-      const output = renderFleet([status]); // no chiefCost map → unmeasurable
-      expect(output).toContain("cost: TOTAL $0.0200  (chief n/a + legs $0.0200)");
-    });
-
-    it("treats an explicit null chief as n/a but a 0 chief as measured $0", () => {
-      const status = feature({ buildUsd: 0, reviewUsd: 0, amendUsd: 0, window: { start: 0, end: 100 } });
-      expect(renderFleet([status], undefined, new Map([["feat-1", null]]))).toContain("chief n/a");
-      expect(renderFleet([status], undefined, new Map([["feat-1", 0]]))).toContain("chief $0.0000");
-    });
   });
 });
