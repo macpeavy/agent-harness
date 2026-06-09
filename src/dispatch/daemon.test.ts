@@ -9,7 +9,7 @@ import type { AmendResult } from "./legs/amend";
 import type { MergeResult, MergeTarget } from "./legs/merge";
 import type { SubstrateConfig } from "../config";
 import { DispatchRepository } from "../substrate/dispatch";
-import { AgentTimeoutError } from "../opencode/client";
+import { AgentBlockedError, AgentTimeoutError } from "../opencode/client";
 
 const CONFIG: SubstrateConfig = {
   repoPath: "/repo",
@@ -343,6 +343,22 @@ describe("build timeout (ADR 0020 robustness)", () => {
     expect(d?.state).toBe("escalated"); // parked for the chief, not failed
     expect(d?.escalated).toBe("attended");
     expect(d?.escalationReason).toContain("no activity for 120000ms"); // the recorded idle reason
+  });
+
+  it("escalates a headless permission block (parked, attended) with what it asked for — ADR 0026", async () => {
+    enqueue("d1");
+    const { legs } = fakeLegs();
+    legs.build = async () => {
+      throw new AgentBlockedError("ses_build", "bash: rm -rf /tmp/x");
+    };
+
+    const driven = await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
+
+    expect(driven).toBe(1);
+    const d = repo.get("d1");
+    expect(d?.state).toBe("escalated"); // parked, not a generic leg error or terminal fail
+    expect(d?.escalated).toBe("attended"); // honest reason — needs a human, not a re-prompt
+    expect(d?.escalationReason).toContain("permission"); // the recorded block reason
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { activitySignature, timeoutKind } from "./client";
+import { activitySignature, classifyPoll, timeoutKind } from "./client";
 
 describe("activitySignature (idle activity proxy, AGENT-38)", () => {
   it("grows as messages and text accrue; is stable when nothing changes", () => {
@@ -37,6 +37,39 @@ describe("activitySignature (idle activity proxy, AGENT-38)", () => {
     const before = [{ parts: [{ type: "step-start" }] }];
     const after = [{ parts: [{ type: "step-start" }, { type: "step-finish" }] }];
     expect(activitySignature(after)).toBeGreaterThan(activitySignature(before));
+  });
+});
+
+describe("classifyPoll (status-driven wait, ADR 0026 wake hardening)", () => {
+  it("a finished reply is done — regardless of status or a stray pending permission", () => {
+    expect(classifyPoll({ finished: true, pendingPermission: null, status: "idle" })).toEqual({ kind: "done" });
+    expect(classifyPoll({ finished: true, pendingPermission: "bash rm", status: "busy" })).toEqual({ kind: "done" });
+  });
+
+  it("busy or retry → working (NEVER aborted — the false-idle fix): a quiet tool/slow call is alive", () => {
+    expect(classifyPoll({ finished: false, pendingPermission: null, status: "busy" })).toEqual({ kind: "working" });
+    expect(classifyPoll({ finished: false, pendingPermission: null, status: "retry" })).toEqual({ kind: "working" });
+  });
+
+  it("a pending permission → blocked (a headless dead end), with what it asked for", () => {
+    expect(classifyPoll({ finished: false, pendingPermission: "bash: rm -rf", status: "busy" })).toEqual({
+      kind: "blocked",
+      detail: "bash: rm -rf",
+    });
+  });
+
+  it("idle and not done → stalled (the idle deadline now means a real stall)", () => {
+    expect(classifyPoll({ finished: false, pendingPermission: null, status: "idle" })).toEqual({ kind: "stalled" });
+  });
+
+  it("falls back to the activity signature only when status is unavailable", () => {
+    // No status (old server): activity moved → assume working; no movement → stalled.
+    expect(classifyPoll({ finished: false, pendingPermission: null, status: null, activityMoved: true })).toEqual({
+      kind: "working",
+    });
+    expect(classifyPoll({ finished: false, pendingPermission: null, status: null, activityMoved: false })).toEqual({
+      kind: "stalled",
+    });
   });
 });
 
