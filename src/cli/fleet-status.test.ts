@@ -295,6 +295,55 @@ describe("renderFleet", () => {
     expect(output).not.toContain("LOC");
   });
 
+  it("feature with budgetUsd displays budget on feature line", () => {
+    const mockStatus: FeatureStatus = {
+      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: 5.0 },
+      cost: ZERO_COST,
+      sessions: [],
+    };
+    const output = renderFleet([mockStatus]);
+    expect(output).toContain("budget $5.0000");
+  });
+
+  it("session with budgetExceededUsd displays BUDGET-parked marker with spent and budget amounts", () => {
+    const mockStatus: FeatureStatus = {
+      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: 5.0 },
+      cost: ZERO_COST,
+      sessions: [
+        {
+          session: {
+            id: "sess-1",
+            state: "building",
+            branch: null,
+            prNumber: null,
+            prUrl: null,
+            locEstimate: null,
+            lastError: null,
+            budgetExceededUsd: 3.5,
+          },
+          chunks: [],
+          readout: {
+            total: 0,
+            reachedReady: 0,
+            escalated: 0,
+            failed: 0,
+            inFlight: 0,
+            cheapAbleFraction: 0,
+            blendedCostPerReadyUsd: 0,
+            totalCostUsd: 0,
+            amendRoundsHistogram: {},
+          },
+          escalations: [],
+        },
+      ],
+    };
+    const output = renderFleet([mockStatus]);
+    expect(output).toContain("BUDGET-parked");
+    expect(output).toContain("spent $3.5000");
+    expect(output).toContain("budget $5.0000");
+    expect(output).toContain("raise / ship-partial / abandon");
+  });
+
   describe("cost line (ADR 0026 — counting the chief)", () => {
     const feature = (cost: FeatureStatus["cost"]): FeatureStatus => ({
       feature: { id: "feat-1", title: "F", state: "building", budgetUsd: null },
