@@ -216,6 +216,14 @@ export class PlanRepository {
     });
   }
 
+  /** Set (or raise) a feature's cost budget (ADR 0026 decision 2) — estimate × headroom at
+   *  approval, or the owner's raised ceiling to resume a budget-parked feature. */
+  setBudget(id: string, budgetUsd: number): void {
+    const row = this.db.select({ id: features.id }).from(features).where(eq(features.id, id)).get();
+    if (!row) throw new Error(`no feature ${id}`);
+    this.db.update(features).set({ budgetUsd, updatedAt: Date.now() }).where(eq(features.id, id)).run();
+  }
+
   // --- sessions ---
 
   /**
@@ -277,6 +285,16 @@ export class PlanRepository {
   /** Clear a session's recorded tick error (the next clean tick). */
   clearSessionError(id: string): void {
     this.db.update(sessions).set({ lastError: null, updatedAt: Date.now() }).where(eq(sessions.id, id)).run();
+  }
+
+  /** Set or clear a session's budget-park marker (ADR 0026 decision 2) — the observed running
+   *  total when it parked for budget, or null to clear it when the owner raises the budget. */
+  setSessionBudgetExceeded(id: string, observedTotalUsd: number | null): void {
+    this.db
+      .update(sessions)
+      .set({ budgetExceededUsd: observedTotalUsd, updatedAt: Date.now() })
+      .where(eq(sessions.id, id))
+      .run();
   }
 
   /**

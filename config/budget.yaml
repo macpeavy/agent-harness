@@ -1,0 +1,28 @@
+# Budget dials (ADR 0026 decision 2) — the cost circuit-breaker the $15 day lacked. Two layers
+# use these: the PRE-FLIGHT estimate at the decomposition gate ("$X to build, go?"), and the
+# RUNTIME breach guard that parks (never hard-kills) a feature that crosses its budget mid-build.
+#
+# The estimate is a forecast (decision-support at the gate), NOT recorded spend — recorded cost is
+# always the real LiteLLM numbers (ADR 0026 decision 1, the ledger). The estimate prefers the REAL
+# historical per-leg averages the instrument records; the seed averages below are only the
+# cold-start fallback (no history yet), tuned out as real data accrues.
+
+# Budget = estimate × headroom. Headroom absorbs normal per-leg variance so the guard trips on a
+# real overspend, not noise. A lean (tune by the instrument), not a hard SLA.
+headroom: 1.5
+
+# Expected amend rounds per chunk folded into the estimate (ADR 0008: ~1 amend on logic-heavy
+# chunks is the designed path, not a failure). Soft.
+expectedAmendRounds: 1
+
+# The chief's typical per-feature decomposition cost, added once to a feature's estimate. A seed
+# (the chief is interactive; its real spend is reconciled by route=chief in the instrument).
+decompositionSeedUsd: 0.60
+
+# Cold-start per-leg averages ($/leg), used ONLY until enough real done-dispatch history exists to
+# average from. Seeded from the shakedown (~$0.10–0.35/PR; Haiku build ~$0.11; Sonnet review the
+# larger leg, now prompt-cached per ADR 0026 decision 3).
+seedAverages:
+  build: 0.15
+  review: 0.40
+  amend: 0.15

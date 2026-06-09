@@ -186,6 +186,51 @@ describe("SessionLoop.runOnce", () => {
     expect(resume).toBeGreaterThan(0);
   });
 
+  // ADR 0026 decision 2: the runtime budget guard parks (never hard-kills) a feature over budget.
+  it("parks a building session when its real total (chief + legs) crosses the budget — work preserved", async () => {
+    plan.createFeature(FEATURE);
+    plan.createSession({ id: "S1", featureId: "F1" });
+    plan.addChunk(chunk("a"));
+    plan.addChunk(chunk("b"));
+    plan.addEdge("S1", "a", "b"); // b is gated behind a, so it only dispatches after a lands
+    service.approve("S1");
+    await loop().runOnce(); // opens + dispatches the ready root a; b still planned (gated)
+    expect(plan.getChunk("a")?.state).toBe("dispatched");
+    expect(plan.getChunk("b")?.state).toBe("planned");
+
+    service.setBudget("F1", 1.0); // a tight budget
+    dispatch.setCost("a", "build", 0.5); // real recorded legs so far
+    // Inject a chief spend that pushes the total over: legs 0.5 + chief 0.8 = 1.3 > 1.0.
+    const guarded = new SessionLoop(plan, service, CONFIG, legs, () => 0.8);
+
+    const advanced = await guarded.runOnce();
+
+    expect(advanced).toBeGreaterThan(0); // the park is real progress
+    expect(plan.getSession("S1")?.state).toBe("needs-attention"); // parked, not hard-killed
+    expect(plan.getSession("S1")?.budgetExceededUsd).toBeCloseTo(1.3, 6);
+    expect(plan.getChunk("b")?.state).toBe("planned"); // NO new chunk dispatched (spend stopped)
+    expect(plan.getChunk("a")?.state).toBe("dispatched"); // the already-launched work is untouched
+
+    // Raising the budget resumes it; with a landed, b (gated behind a) now dispatches.
+    service.raiseBudget("F1", 5.0);
+    landChunk("a");
+    await guarded.runOnce();
+    expect(plan.getSession("S1")?.state).toBe("building"); // resumed
+    expect(plan.getChunk("b")?.state).toBe("dispatched"); // and dispatch continues
+  });
+
+  it("does not trip when a feature has no budget set (opt-in guard)", async () => {
+    plan.createFeature(FEATURE);
+    plan.createSession({ id: "S1", featureId: "F1" });
+    plan.addChunk(chunk("a"));
+    service.approve("S1");
+    await loop().runOnce();
+    dispatch.setCost("a", "build", 9999); // huge spend, but no budget set
+    const guarded = new SessionLoop(plan, service, CONFIG, legs, () => 9999);
+    await guarded.runOnce();
+    expect(plan.getSession("S1")?.state).not.toBe("needs-attention"); // never parked
+  });
+
   // The priority fix: a throw in one session's tick must never exit the loop process.
   it("survives a session whose advance throws — records the error and advances the others", async () => {
     plan.createFeature(FEATURE);

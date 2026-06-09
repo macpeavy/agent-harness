@@ -19,6 +19,9 @@ import { PlanRepository } from "../substrate/plan";
 import { DispatchRepository } from "../substrate/dispatch";
 import { PlanDispatchService } from "./plan-dispatch";
 import { runSessionOpenLeg, type SessionOpenResult } from "./legs/session-open";
+import { ledgerPath, readSpendLedger, spendInWindow } from "./litellm-spend";
+import { isOverBudget } from "./budget";
+import type { ReconcileCost } from "./daemon";
 
 /** The session-level legs the loop drives — injected so the tick is testable with fakes. */
 export interface SessionLegs {
@@ -31,13 +34,20 @@ const defaultSessionLegs: SessionLegs = {
 
 export class SessionLoop {
   private running = false;
+  private readonly chiefSpend: ReconcileCost;
 
   constructor(
     private readonly plan: PlanRepository,
     private readonly service: PlanDispatchService,
     private readonly config: SubstrateConfig,
     private readonly legs: SessionLegs = defaultSessionLegs,
-  ) {}
+    // The chief's real spend in a window (ADR 0026 decision 2 budget guard) — same ledger reader
+    // the daemon uses for per-leg cost. Injected so the loop is testable without a live ledger.
+    chiefSpend?: ReconcileCost,
+  ) {
+    this.chiefSpend =
+      chiefSpend ?? ((route, start, end) => spendInWindow(readSpendLedger(ledgerPath(config.repoPath)), route, start, end));
+  }
 
   /**
    * One tick over every session. Opens + advances the sessions of approved features; skips only
@@ -50,7 +60,10 @@ export class SessionLoop {
    * as progress while nothing has changed.
    */
   async runOnce(): Promise<number> {
-    let advanced = 0;
+    // Enforce the budget guard FIRST (ADR 0026 decision 2) — prevent-before-spend: a feature
+    // already over budget parks its building sessions now, so this tick's advance dispatches no
+    // further chunks (dispatchReady is guarded for a budget-parked session).
+    let advanced = this.checkBudgets();
     for (const session of this.plan.listAllSessions()) {
       if (session.state === "done" || session.state === "failed" || session.state === "abandoned") continue;
       const feature = this.plan.getFeature(session.featureId);
@@ -74,6 +87,34 @@ export class SessionLoop {
       }
     }
     return advanced;
+  }
+
+  /**
+   * The runtime budget guard (ADR 0026 decision 2): for each building feature with a budget, sum
+   * its REAL running total — legs (the daemon's recorded per-leg cost) + the chief (route=chief
+   * over the feature's window, from the ledger) — and park (NOT hard-kill) its building sessions
+   * when the total crosses the budget. Work already merged into session-main is preserved; only
+   * new dispatch stops. Returns the count of sessions parked this tick (0 = nothing tripped).
+   */
+  private checkBudgets(): number {
+    let parked = 0;
+    for (const feature of this.plan.listAllFeatures()) {
+      if (feature.state !== "building" || feature.budgetUsd === null) continue;
+      const { cost } = this.service.status(feature.id);
+      const legs = cost.buildUsd + cost.reviewUsd + cost.amendUsd;
+      const chief = this.chiefSpend("chief", cost.window.start, cost.window.end);
+      const total = legs + chief;
+      if (!isOverBudget(total, feature.budgetUsd)) continue;
+      const sessions = this.service.parkOverBudget(feature.id, total);
+      if (sessions.length > 0) {
+        parked += sessions.length;
+        console.warn(
+          `session-loop: feature ${feature.id} over budget ($${total.toFixed(4)} > $${feature.budgetUsd.toFixed(4)}) — ` +
+            `parked ${sessions.length} session(s) (${sessions.join(", ")}); raise the budget to resume (work preserved)`,
+        );
+      }
+    }
+    return parked;
   }
 
   /** Poll, advancing approved sessions; sleep `pollMs` when there's nothing to do. */

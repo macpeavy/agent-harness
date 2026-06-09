@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { PlanDispatchService, outcomeFor, specFromChunk } from "./plan-dispatch";
 import { PlanRepository, type Chunk, type CreateChunk } from "../substrate/plan";
 import { DispatchRepository } from "../substrate/dispatch";
+import { DEFAULT_BUDGET } from "../budget-config";
 
 // The service binds the two independent repositories over the one shared substrate db
 // (the repos never import each other — ADR 0017). The test opens both on the same file.
@@ -116,6 +117,86 @@ describe("buildDirect (small-feature path, ADR 0026)", () => {
       chunk: { id: "whole", surface: "src/v.ts", intent: "i", contract: "c", acceptance: "a" },
     });
     expect(plan.getFeature("F1")?.state).toBe("planning");
+  });
+});
+
+describe("budget guard (ADR 0026 decision 2)", () => {
+  const cfg = { ...DEFAULT_BUDGET, expectedAmendRounds: 1, decompositionSeedUsd: 0.5, seedAverages: { build: 0.1, review: 0.4, amend: 0.2 } };
+
+  it("estimateFeature forecasts chunkCount × seed averages + decomposition (cold start)", () => {
+    decompose([chunk("a"), chunk("b")]);
+    const est = service.estimateFeature("F1", cfg);
+    expect(est.chunkCount).toBe(2);
+    expect(est.perChunkUsd).toBeCloseTo(0.7, 6); // 0.1 + 0.4 + 1×0.2
+    expect(est.estimateUsd).toBeCloseTo(2 * 0.7 + 0.5, 6); // + decomposition seed
+  });
+
+  it("estimateFeature prefers REAL historical averages once dispatches have recorded cost", () => {
+    decompose([chunk("a"), chunk("b")]);
+    service.dispatchReady("S1");
+    dispatch.setCost("a", "build", 0.02); // real recorded cost on a finished dispatch
+    dispatch.setCost("a", "review", 0.06);
+    const est = service.estimateFeature("F1", cfg);
+    // build avg = 0.02 (from history), review avg = 0.06, amend has no history → seed 0.2
+    expect(est.averages.build).toBeCloseTo(0.02, 6);
+    expect(est.averages.review).toBeCloseTo(0.06, 6);
+    expect(est.averages.amend).toBeCloseTo(0.2, 6);
+  });
+
+  it("setBudget surfaces on the feature status", () => {
+    decompose([chunk("a")]);
+    service.setBudget("F1", 3.5);
+    expect(service.status("F1").feature.budgetUsd).toBe(3.5);
+  });
+
+  it("parkOverBudget parks building sessions (needs-attention) and preserves their merged work", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1"); // session → building
+    const parked = service.parkOverBudget("F1", 9.99);
+    expect(parked).toEqual(["S1"]);
+    const s = service.status("F1").sessions[0]!;
+    expect(s.session.state).toBe("needs-attention");
+    expect(s.session.budgetExceededUsd).toBeCloseTo(9.99, 6);
+  });
+
+  it("a budget-parked session dispatches no NEW chunks (spend stops)", () => {
+    decompose([chunk("a"), chunk("b")]);
+    service.dispatchReady("S1");
+    service.parkOverBudget("F1", 9.99);
+    expect(service.dispatchReady("S1")).toEqual([]); // guarded — no new materialisation
+  });
+
+  it("recordOutcomes does NOT auto-resume a budget-parked session", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1");
+    service.parkOverBudget("F1", 9.99);
+    service.recordOutcomes("S1"); // no blocked chunks — would normally resume needs-attention→building
+    expect(service.status("F1").sessions[0]!.session.state).toBe("needs-attention"); // stays parked
+  });
+
+  it("raiseBudget clears the budget park and resumes the session", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1");
+    service.parkOverBudget("F1", 9.99);
+    const { resumed } = service.raiseBudget("F1", 20);
+    expect(resumed).toEqual(["S1"]);
+    const s = service.status("F1");
+    expect(s.feature.budgetUsd).toBe(20);
+    expect(s.sessions[0]!.session.state).toBe("building");
+    expect(s.sessions[0]!.session.budgetExceededUsd).toBeNull();
+  });
+
+  it("raiseBudget leaves a chunk-blocked session parked (a chunk failure is the chief's to route)", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1"); // building
+    service.parkOverBudget("F1", 9.99); // budget-parked while building (marker set)
+    driveTo("a", "escalated"); // the in-flight chunk then fails for real
+    service.recordOutcomes("S1"); // flows it; stays needs-attention (budget-guarded, also now blocked)
+    const { resumed } = service.raiseBudget("F1", 20);
+    expect(resumed).toEqual([]); // budget marker cleared, but the escalated chunk still needs routing
+    const s = service.status("F1").sessions[0]!.session;
+    expect(s.state).toBe("needs-attention");
+    expect(s.budgetExceededUsd).toBeNull(); // the budget block was cleared
   });
 });
 
