@@ -18,10 +18,27 @@ model_list:
     litellm_params:
       model: openrouter/anthropic/claude-haiku-4.5
       api_key: os.environ/OPENROUTER_API_KEY
+      # Prompt-cache the cheap builder too (ADR 0026 refinement). Haiku is Anthropic, so it uses the
+      # SAME explicit cache_control mechanism as the strong seats — the original "cheap builder =
+      # implicit caching, out of scope" exclusion only holds for the non-Anthropic alternates below.
+      # The builder is the heaviest re-reader (it re-sends the whole context pack + growing
+      # conversation every turn — 457K input tokens uncached in a dogfood build), so caching it is
+      # the biggest remaining lever. Same two breakpoints as the strong seats (see below). NOTE:
+      # Haiku's min cacheable prefix is 2048 tokens (double Sonnet's 1024) — a build whose context
+      # is under that won't cache, but those builds are already cheap. Probed: a 5959-token prefix
+      # billed $0.0075 to write then $0.0006 on the cache-read (~11×).
+      cache_control_injection_points:
+        - location: message
+          role: system
+        - location: message
+          index: -1
 
   # ── Validated Western alternates (AGENT-17 probe — both tool-call cleanly; available
   #    fallbacks if the primary regresses). gemini is the OpenRouter half only; the
   #    Google-direct control is deferred pending a Google key. Live pricing 2026-06-07.
+  #    NO cache_control here: these are NOT Anthropic — gpt-4.1-nano caches implicitly (OpenAI
+  #    automatic prompt caching) and gemini has its own implicit caching; injecting Anthropic-style
+  #    cache_control would be dropped/ignored upstream. Their caching needs no config.
   - model_name: builder-nano        # gpt-4.1-nano — $0.10/$0.40, 1M ctx (OpenAI, US)
     litellm_params:
       model: openrouter/openai/gpt-4.1-nano
@@ -41,8 +58,8 @@ model_list:
   #   - index: -1    → caches the whole conversation-so-far each turn, so an agentic loop's growing
   #     re-reads (the reviewer runs `git diff` + reads files) hit cache on the next turn.
   # The reviewer is CACHED, not demoted (ADR 0026 alternatives) — same Sonnet, same prompt. The
-  # cheap builders (Haiku/Gemini/nano) are intentionally absent: provider-implicit caching, a
-  # different mechanism, out of scope.
+  # Haiku `builder` above is now cached the same way (it's Anthropic too); only the non-Anthropic
+  # alternates (builder-nano / builder-gemini) skip this and rely on their upstream's implicit cache.
   #
   # ── Strong builder seat: the builder persona on the strong route (ADR 0013/0014) — for a
   #    tier-hinted (gnarly) chunk or a tier-promoted escalation. Sonnet; "strong build" is a
