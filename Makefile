@@ -56,11 +56,14 @@ up: migrate
 		tmux new-window -d -t $(SESSION) -n logs 'make gateway; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION):logs 'make daemon; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION):logs 'make session-loop; $(HOLD)'; \
+		tmux split-window -h -t $(SESSION):chief 'make status-watch; $(HOLD)'; \
+		tmux select-pane -t $(SESSION):chief.0; \
 	else \
 		chief=$$(tmux new-session -d -P -F '#{pane_id}' $(SIZE) -s $(SESSION) -n stack 'make chief; $(HOLD)'); \
 		tmux split-window -v -b -l $(LOGS_HEIGHT) -t $$chief 'make gateway; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION) 'make daemon; $(HOLD)'; \
 		tmux split-window -h -t $(SESSION) 'make session-loop; $(HOLD)'; \
+		tmux split-window -h -t $$chief 'make status-watch; $(HOLD)'; \
 		tmux select-pane -t $$chief; \
 	fi
 	@tmux attach -t $(SESSION)
@@ -91,9 +94,16 @@ abandon:
 	@test -n "$(FEATURE)" || { echo "usage: make abandon FEATURE=<featureId>"; exit 1; }
 	bash -c '$(LOADENV) bun run src/cli/abandon.ts $(FEATURE)'
 
-# Fleet status: render live fleet status from the substrate DB.
+# Fleet status: render live fleet status from the substrate DB (one shot).
 status:
 	bash -c '$(LOADENV) bun run src/cli/fleet-status.ts'
+
+# Live-refreshing fleet status — the watch pane `make up` opens so the operator can see build
+# progress (and a stalled dispatch) without running `status` by hand. Re-renders every
+# STATUS_INTERVAL seconds; the CLI is a cheap read of the substrate DB.
+STATUS_INTERVAL ?= 5
+status-watch:
+	bash -c '$(LOADENV) while :; do clear; bun run src/cli/fleet-status.ts; sleep $(STATUS_INTERVAL); done'
 
 # Builder-acceptance gate (ADR 0025): drive the real build leg against a canned write-required
 # chunk and prove the model produces a typechecking diff under budget. ROUTE defaults to builder.

@@ -157,6 +157,11 @@ export class PlanRepository {
     this.sqlite = new Database(dbPath);
     this.sqlite.run("PRAGMA journal_mode = WAL");
     this.sqlite.run("PRAGMA foreign_keys = ON"); // the FKs are real integrity, not decoration
+    // Wait, don't throw, on a write-lock contention (ADR 0016). `make up` co-launches multiple
+    // writer processes against this one file; without this a writer that loses the race gets
+    // SQLITE_BUSY ("database is locked") immediately and the process exits 1 (the daemon crash).
+    // 5s of retry comfortably covers these tiny transactions.
+    this.sqlite.run("PRAGMA busy_timeout = 5000");
     this.db = drizzle(this.sqlite);
     if (opts.migrate !== false) migrate(this.db, { migrationsFolder: MIGRATIONS_DIR });
   }
