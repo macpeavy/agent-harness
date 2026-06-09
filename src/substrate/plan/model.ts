@@ -5,6 +5,8 @@
 // model is one import for "what a feature/chunk/edge is and how its state moves".
 
 export type { Feature, NewFeature, Session, NewSession, Chunk, NewChunk, Edge, NewEdge } from "./schema";
+import type { Chunk, Edge, Feature, Session } from "./schema";
+import type { Dispatch } from "../dispatch/schema";
 
 /** A feature's lifecycle (ADR 0020): the chief meta-decomposes it into sessions (planning,
  *  amendable), the owner approves (ready), sessions dispatch (building), all done (done). */
@@ -99,6 +101,27 @@ export function isChunkTerminal(state: ChunkState): boolean {
 /** A session state is terminal when it has no outgoing transitions. */
 export function isSessionTerminal(state: SessionState): boolean {
   return SESSION_TRANSITIONS[state].length === 0;
+}
+
+// --- feature graph types (used by loadFeatureGraph, ADR 0019/0020) ---
+
+/** A chunk paired with the dispatch it was materialized as (null if not yet dispatched). */
+export interface ChunkGraph {
+  chunk: Chunk;
+  dispatch: Dispatch | null;
+}
+
+/** A session's full sub-graph: its chunks in topological order + its dependency edges. */
+export interface SessionGraph {
+  session: Session;
+  chunks: ChunkGraph[];
+  edges: Edge[];
+}
+
+/** The complete object graph for one feature. */
+export interface FeatureGraph {
+  feature: Feature;
+  sessions: SessionGraph[];
 }
 
 /** A dependency edge in a proposed chunk-DAG (`to` depends on `from`). */
