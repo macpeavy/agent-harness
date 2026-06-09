@@ -4,7 +4,7 @@
 // the cross-context chunk → dispatches. drizzle-kit generates migrations from this file.
 
 import type { InferInsertModel, InferSelectModel } from "drizzle-orm";
-import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { dispatches } from "../dispatch/schema";
 import { CHUNK_STATES, FEATURE_STATES, SESSION_STATES, TIER_HINTS } from "./model";
 
@@ -14,6 +14,11 @@ export const features = sqliteTable("features", {
   title: text("title").notNull(),
   description: text("description").notNull(),
   state: text("state", { enum: FEATURE_STATES }).notNull().default("planning"),
+  // The cost budget for this feature (ADR 0026 decision 2) — estimate × headroom, set when the
+  // owner approves. The runtime guard parks the feature's building sessions when the real running
+  // total (chief + legs) crosses this. Null = no budget (the guard is opt-in; the feature runs as
+  // before). Raised by the owner to resume a budget-parked feature.
+  budgetUsd: real("budget_usd"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -40,6 +45,11 @@ export const sessions = sqliteTable("sessions", {
   // cleared on the next clean tick. The loop catches + continues (one session's throw must
   // never exit the process); this is how the error surfaces in `status` for the chief.
   lastError: text("last_error"),
+  // The budget-park marker (ADR 0026 decision 2): the real running total observed when this
+  // session parked for crossing its feature's budget. Null = not budget-parked. Distinguishes a
+  // budget park (feature-level, between chunks) from a chunk-failure park (a parked dispatch), and
+  // prevents the recordOutcomes auto-resume from un-parking it before the owner raises the budget.
+  budgetExceededUsd: real("budget_exceeded_usd"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });

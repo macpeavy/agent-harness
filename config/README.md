@@ -50,6 +50,17 @@ so a feature's recorded cost is real LiteLLM numbers for every leg (build/review
 the chief, not token-count estimation. `make status` shows the per-feature TOTAL with the chief
 counted. The ledger is the cost signal for AGENT-9.
 
+### Budget guard — `budget.yaml` (ADR 0026 decision 2)
+
+The cost circuit-breaker the $15 day lacked, in two layers. **Pre-flight:** at the decomposition
+gate the chief presents an estimate ("$X to build, go?") — chunk count × the real historical
+per-leg averages the instrument records (the seed averages in `budget.yaml` are only the
+cold-start fallback) + a decomposition seed. **Runtime:** dispatch locks the feature's budget to
+estimate × `headroom`; if the real running total (chief + legs) crosses it mid-build, the session
+**parks** (`needs-attention`, surfaced in `status`/`fleet-status`) — it is never hard-killed.
+Chunks already merged into session-main are preserved; the owner raises the budget (`raise_budget`)
+to continue, merges the PR to ship what's done, or abandons. A forecast, never recorded spend.
+
 ### The $25 hard cap
 
 The ledger is logging, **not** a budget gate. Cross-request hard-budget enforcement and the

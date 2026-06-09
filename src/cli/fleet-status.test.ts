@@ -17,7 +17,7 @@ describe("renderFleet", () => {
 
   it("contains feature line with state, id, and title", () => {
     const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building" },
+      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: null },
       cost: ZERO_COST,
       sessions: [],
     };
@@ -28,7 +28,7 @@ describe("renderFleet", () => {
 
   it("contains session line with id, state, PR number, and LOC", () => {
     const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building" },
+      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: null },
       cost: ZERO_COST,
       sessions: [
         {
@@ -40,6 +40,7 @@ describe("renderFleet", () => {
             prUrl: null,
             locEstimate: 800,
             lastError: null,
+            budgetExceededUsd: null,
           },
           chunks: [],
           readout: {
@@ -65,7 +66,7 @@ describe("renderFleet", () => {
 
   it("contains chunk line with id, surface, state, and dispatch state", () => {
     const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building" },
+      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: null },
       cost: ZERO_COST,
       sessions: [
         {
@@ -77,6 +78,7 @@ describe("renderFleet", () => {
             prUrl: null,
             locEstimate: 800,
             lastError: null,
+            budgetExceededUsd: null,
           },
           chunks: [
             {
@@ -109,7 +111,7 @@ describe("renderFleet", () => {
 
   it("contains readout line with done/esc/fail/in-flight counts and cheap-able", () => {
     const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building" },
+      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: null },
       cost: ZERO_COST,
       sessions: [
         {
@@ -121,6 +123,7 @@ describe("renderFleet", () => {
             prUrl: null,
             locEstimate: 800,
             lastError: null,
+            budgetExceededUsd: null,
           },
           chunks: [
             {
@@ -153,7 +156,7 @@ describe("renderFleet", () => {
 
   it("contains footer with features, sessions, chunks counts", () => {
     const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building" },
+      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: null },
       cost: ZERO_COST,
       sessions: [
         {
@@ -165,6 +168,7 @@ describe("renderFleet", () => {
             prUrl: null,
             locEstimate: 800,
             lastError: null,
+            budgetExceededUsd: null,
           },
           chunks: [
             {
@@ -200,6 +204,7 @@ describe("renderFleet", () => {
         id: "feat-1",
         title: "This is a very long feature title that should be truncated",
         state: "building",
+        budgetUsd: null,
       },
       cost: { buildUsd: 1.2345, reviewUsd: 6.789, amendUsd: 0.5, window: { start: 0, end: 100 } },
       sessions: [
@@ -212,6 +217,7 @@ describe("renderFleet", () => {
             prUrl: null,
             locEstimate: 800,
             lastError: null,
+            budgetExceededUsd: null,
           },
           chunks: [
             {
@@ -254,7 +260,7 @@ describe("renderFleet", () => {
 
   it("omits PR and LOC fields when null", () => {
     const mockStatus: FeatureStatus = {
-      feature: { id: "feat-1", title: "My Feature", state: "building" },
+      feature: { id: "feat-1", title: "My Feature", state: "building", budgetUsd: null },
       cost: ZERO_COST,
       sessions: [
         {
@@ -266,6 +272,7 @@ describe("renderFleet", () => {
             prUrl: null,
             locEstimate: null,
             lastError: null,
+            budgetExceededUsd: null,
           },
           chunks: [],
           readout: {
@@ -290,7 +297,7 @@ describe("renderFleet", () => {
 
   describe("cost line (ADR 0026 — counting the chief)", () => {
     const feature = (cost: FeatureStatus["cost"]): FeatureStatus => ({
-      feature: { id: "feat-1", title: "F", state: "building" },
+      feature: { id: "feat-1", title: "F", state: "building", budgetUsd: null },
       cost,
       sessions: [],
     });

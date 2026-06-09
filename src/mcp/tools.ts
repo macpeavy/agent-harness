@@ -14,6 +14,12 @@ import type {
   PlanDispatchService,
 } from "../dispatch/plan-dispatch";
 import type { CreateChunk, CreateMetaDecomposition, ReviseChunk } from "../substrate/plan";
+import { budgetFromEstimate, type FeatureEstimate } from "../dispatch/budget";
+import type { BudgetConfig } from "../budget-config";
+
+function usd(n: number): string {
+  return `$${n.toFixed(4)}`;
+}
 
 /** Reads a session PR's review comments off GitHub — injected so the handler stays testable
  *  (the real impl is the PR-review leg bound to config; a test passes a fake). */
@@ -73,7 +79,8 @@ async function guardAsync(fn: () => Promise<CallToolResult>): Promise<CallToolRe
 
 /** Render a feature's status as a readable digest — feature, then its sessions (ADR 0020). */
 export function renderFeatureStatus(s: FeatureStatus): string {
-  const lines: string[] = [`Feature ${s.feature.id} "${s.feature.title}" — ${s.feature.state}`];
+  const budget = s.feature.budgetUsd !== null ? ` — budget ${usd(s.feature.budgetUsd)}` : "";
+  const lines: string[] = [`Feature ${s.feature.id} "${s.feature.title}" — ${s.feature.state}${budget}`];
   if (s.sessions.length === 0) lines.push("Sessions: none");
 
   // The completion signal (ADR 0020): surface sessions AWAITING REVIEW or ESCALATED up top, so
@@ -85,6 +92,14 @@ export function renderFeatureStatus(s: FeatureStatus): string {
     if (sess.session.state === "review") {
       const pr = sess.session.prNumber ? ` (PR #${sess.session.prNumber})` : "";
       attention.push(`${sess.session.id} awaiting your review${pr} — review/merge its PR`);
+    } else if (sess.session.budgetExceededUsd !== null) {
+      // Budget-parked (ADR 0026 decision 2): the feature crossed its budget. Work already merged
+      // into session-main is preserved (ship-partial = merge the PR). Owner's call to route.
+      attention.push(
+        `${sess.session.id} BUDGET exceeded (spent ${usd(sess.session.budgetExceededUsd)}` +
+          `${s.feature.budgetUsd !== null ? ` / budget ${usd(s.feature.budgetUsd)}` : ""}) — ` +
+          `raise_budget to continue / merge the PR to ship what's done / abandon. Nothing built is lost.`,
+      );
     } else if (sess.session.state === "needs-attention") {
       // A chunk parked/failed and the session stopped (ADR 0023 row 7) — route it so the DAG
       // can resume. The parked chunk's reason shows in the per-session escalations below.
@@ -241,14 +256,56 @@ export function runStatus(service: PlanDispatchService, featureId: string): Call
   return guard(() => text(renderFeatureStatus(service.status(featureId))));
 }
 
-/** `dispatch` — approve the feature for build (ADR 0020 slice 2b). The session loop then opens
- *  session-main and launches the chunks; the chief hands off and steps back. */
-export function runDispatch(service: PlanDispatchService, sessionId: string): CallToolResult {
+/** Render a feature estimate for the chief to present at the gate (ADR 0026 decision 2). */
+export function renderEstimate(featureId: string, est: FeatureEstimate, budgetUsd: number): string {
+  return (
+    `Estimate for feature ${featureId}: ${usd(est.estimateUsd)} to build ` +
+    `(${est.chunkCount} chunk(s) × ${usd(est.perChunkUsd)} + ${usd(est.decompositionUsd)} decomposition).\n` +
+    `Per-leg averages used: build ${usd(est.averages.build)} / review ${usd(est.averages.review)} / ` +
+    `amend ${usd(est.averages.amend)} (real history where available, else seeds).\n` +
+    `On dispatch the budget will be set to ${usd(budgetUsd)} (estimate × headroom); a runtime overspend ` +
+    `parks the feature for you to raise/ship-partial/abandon — it is never hard-killed. Present "$X to build, go?".`
+  );
+}
+
+/** `estimate` — the pre-flight gate forecast (ADR 0026 decision 2): "$X to build, go?". A
+ *  forecast from real historical per-leg averages, NOT recorded spend. */
+export function runEstimate(service: PlanDispatchService, featureId: string, cfg: BudgetConfig): CallToolResult {
+  return guard(() => {
+    const est = service.estimateFeature(featureId, cfg);
+    return text(renderEstimate(featureId, est, budgetFromEstimate(est.estimateUsd, cfg)));
+  });
+}
+
+/** `dispatch` — approve the feature for build (ADR 0020 slice 2b) AND lock its budget to
+ *  estimate × headroom (ADR 0026 decision 2), so the runtime guard has a ceiling. The session
+ *  loop then opens session-main and launches the chunks; the chief hands off and steps back. */
+export function runDispatch(service: PlanDispatchService, sessionId: string, cfg: BudgetConfig): CallToolResult {
   return guard(() => {
     const { featureId } = service.approve(sessionId);
+    // Lock the budget from the estimate at the gate the owner just cleared (ADR 0026).
+    const est = service.estimateFeature(featureId, cfg);
+    const budgetUsd = budgetFromEstimate(est.estimateUsd, cfg);
+    service.setBudget(featureId, budgetUsd);
     return text(
-      `Approved feature ${featureId} (via session ${sessionId}). The session loop will open ` +
-        `session-main, launch the ready chunks, and build them into the session PR. Use status to watch.`,
+      `Approved feature ${featureId} (via session ${sessionId}); budget set to ${usd(budgetUsd)} ` +
+        `(estimate ${usd(est.estimateUsd)} × headroom). The session loop will open session-main, launch the ` +
+        `ready chunks, and build them into the session PR. A runtime overspend parks (never hard-kills) — ` +
+        `raise_budget to continue. Use status to watch.`,
+    );
+  });
+}
+
+/** `raise_budget` — raise a budget-parked feature's ceiling and resume it (ADR 0026 decision 2,
+ *  the "continue" choice). Clears the budget park; a chunk-blocked session stays for the chief. */
+export function runRaiseBudget(service: PlanDispatchService, featureId: string, budgetUsd: number): CallToolResult {
+  return guard(() => {
+    const { resumed } = service.raiseBudget(featureId, budgetUsd);
+    return text(
+      `Raised feature ${featureId} budget to ${usd(budgetUsd)}. ` +
+        (resumed.length > 0
+          ? `Resumed ${resumed.length} budget-parked session(s): ${resumed.join(", ")} — building continues.`
+          : `No budget-parked sessions resumed (none were budget-parked, or a chunk still needs routing).`),
     );
   });
 }

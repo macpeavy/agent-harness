@@ -14,6 +14,8 @@
 // drives every queued dispatch; this service just materialises them and reaps outcomes.
 
 import { dispatchBranch } from "./legs/build";
+import { estimateFeatureCost, legAveragesFrom, type FeatureEstimate, type LegAverages } from "./budget";
+import type { BudgetConfig } from "../budget-config";
 import {
   cheapAbleFraction,
   DispatchRepository,
@@ -124,6 +126,9 @@ export interface SessionStatus {
     prUrl: string | null;
     locEstimate: number | null;
     lastError: string | null;
+    /** Set = this session is BUDGET-parked (ADR 0026): the real total observed when it crossed
+     *  the feature's budget. The owner raises the budget to resume. Null = not budget-parked. */
+    budgetExceededUsd: number | null;
   };
   chunks: ChunkStatus[];
   readout: Readout;
@@ -147,7 +152,7 @@ export interface FeatureCost {
 /** A feature's full status (ADR 0020): the feature, then its sessions, each with its chunks,
  *  readout, and escalations — plus its reconciled per-leg cost + chief-attribution window. */
 export interface FeatureStatus {
-  feature: { id: string; title: string; state: FeatureState };
+  feature: { id: string; title: string; state: FeatureState; budgetUsd: number | null };
   sessions: SessionStatus[];
   cost: FeatureCost;
 }
@@ -359,6 +364,11 @@ export class PlanDispatchService {
     const feature = this.plan.getFeature(session.featureId);
     if (!feature) throw new Error(`no feature ${session.featureId}`);
 
+    // Budget-parked (ADR 0026 decision 2): the feature crossed its budget — stop dispatching NEW
+    // chunks (further spend) until the owner raises the budget. Work already merged into
+    // session-main is untouched; in-flight chunks still land via recordOutcomes. Idempotent.
+    if (session.budgetExceededUsd !== null) return [];
+
     // The conversational approval, at the feature: a planning feature is approved
     // (planning → ready) as part of dispatching one of its sessions. The plan model owns the
     // transition + its validation (ADR 0017); dispatch is just the trigger.
@@ -384,6 +394,82 @@ export class PlanDispatchService {
     }
 
     return materialised;
+  }
+
+  // --- budget (ADR 0026 decision 2) ---
+
+  /** The real historical per-leg averages across finished dispatches — the instrument signal the
+   *  estimate is grounded in (ADR 0026), with the config seeds as the cold-start fallback. */
+  historicalLegAverages(seed: LegAverages): LegAverages {
+    return legAveragesFrom(this.dispatch.list(), seed);
+  }
+
+  /**
+   * Forecast a feature's build cost (ADR 0026 decision 2) — the pre-flight estimate shown at the
+   * gate ("$X to build, go?"). Chunk count across the feature's sessions × the real historical
+   * per-leg averages (seed fallback) + the chief's decomposition seed. A forecast, never recorded
+   * spend (recorded cost stays the real ledger numbers, decision 1).
+   */
+  estimateFeature(featureId: string, cfg: BudgetConfig): FeatureEstimate {
+    const feature = this.plan.getFeature(featureId);
+    if (!feature) throw new Error(`no feature ${featureId}`);
+    const chunkCount = this.plan
+      .listSessions(featureId)
+      .reduce((n, s) => n + this.plan.listChunks(s.id).length, 0);
+    const averages = this.historicalLegAverages(cfg.seedAverages);
+    return estimateFeatureCost(chunkCount, averages, cfg);
+  }
+
+  /** Set (or raise) a feature's budget directly (ADR 0026). Used at approval (estimate × headroom)
+   *  and as the building block of `raiseBudget`. */
+  setBudget(featureId: string, budgetUsd: number): void {
+    this.plan.setBudget(featureId, budgetUsd);
+  }
+
+  /**
+   * Runtime breach → park, work preserved (ADR 0026 decision 2). The feature's real running total
+   * (chief + legs, computed by the driver that has the ledger) crossed its budget: park every
+   * BUILDING session of the feature in `needs-attention` with the observed total as the budget
+   * marker. Does NOT hard-kill — chunks already merged into session-main stay; in-flight chunks
+   * still land (recordOutcomes keeps flowing them); only NEW dispatch stops (dispatchReady early-
+   * returns for a budget-parked session). Idempotent. Returns the sessions parked this call.
+   */
+  parkOverBudget(featureId: string, observedTotalUsd: number): string[] {
+    const parked: string[] = [];
+    for (const session of this.plan.listSessions(featureId)) {
+      if (session.state !== "building") continue; // only stop sessions still spending
+      this.plan.transitionSession(session.id, "needs-attention");
+      this.plan.setSessionBudgetExceeded(session.id, observedTotalUsd);
+      parked.push(session.id);
+    }
+    return parked;
+  }
+
+  /**
+   * Raise a budget-parked feature's budget and resume it (ADR 0026 — "continue"): set the new
+   * ceiling, clear the budget-park marker on its sessions, and return them to `building` so the
+   * loop dispatches the remaining chunks. A session that ALSO has a real chunk-failure park
+   * (a blocked/escalated chunk) stays in needs-attention for the chief to route — raising the
+   * budget clears only the budget block, not a chunk block.
+   */
+  raiseBudget(featureId: string, budgetUsd: number): { resumed: string[] } {
+    const feature = this.plan.getFeature(featureId);
+    if (!feature) throw new Error(`no feature ${featureId}`);
+    this.plan.setBudget(featureId, budgetUsd);
+
+    const resumed: string[] = [];
+    for (const session of this.plan.listSessions(featureId)) {
+      if (session.budgetExceededUsd === null) continue; // not budget-parked
+      this.plan.setSessionBudgetExceeded(session.id, null); // clear the budget block
+      // Resume only if no chunk is independently blocked (a chunk failure is the chief's to route).
+      const chunks = this.plan.listChunks(session.id);
+      const blocked = chunks.some((c) => c.state === "escalated" || c.state === "failed");
+      if (session.state === "needs-attention" && !blocked) {
+        this.plan.transitionSession(session.id, "building");
+        resumed.push(session.id);
+      }
+    }
+    return { resumed };
   }
 
   /**
@@ -496,9 +582,11 @@ export class PlanDispatchService {
       } else if (buildComplete) {
         this.plan.transitionSession(sessionId, "review");
       }
-    } else if (session.state === "needs-attention" && blocked.length === 0) {
+    } else if (session.state === "needs-attention" && blocked.length === 0 && session.budgetExceededUsd === null) {
       // The chief routed the parked chunk(s) — resume. Back to `building` for the re-dispatched
       // work; straight to `review` only if routing already resolved everything to done/superseded.
+      // A BUDGET-parked session (budgetExceededUsd set) is NOT auto-resumed here — only the owner
+      // raising the budget (raiseBudget) clears it, else it would un-park itself the next tick.
       this.plan.transitionSession(sessionId, buildComplete ? "review" : "building");
     }
 
@@ -688,6 +776,7 @@ export class PlanDispatchService {
           prUrl: session.prUrl,
           locEstimate: session.locEstimate,
           lastError: session.lastError,
+          budgetExceededUsd: session.budgetExceededUsd,
         },
         chunks: chunkStatuses,
         readout: cheapAbleFraction([...dispatchById.values()]),
@@ -696,7 +785,7 @@ export class PlanDispatchService {
     });
 
     return {
-      feature: { id: feature.id, title: feature.title, state: feature.state },
+      feature: { id: feature.id, title: feature.title, state: feature.state, budgetUsd: feature.budgetUsd },
       sessions,
       cost: { buildUsd, reviewUsd, amendUsd, window: { start: feature.createdAt, end: windowEnd } },
     };

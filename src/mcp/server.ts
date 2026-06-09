@@ -13,11 +13,14 @@ import { DispatchRepository } from "../substrate/dispatch";
 import { PlanDispatchService } from "../dispatch/plan-dispatch";
 import { loadConfig } from "../config";
 import { DEFAULT_DECOMPOSITION, loadDecompositionConfig, type DecompositionConfig } from "../decomposition-config";
+import { DEFAULT_BUDGET, loadBudgetConfig, type BudgetConfig } from "../budget-config";
 import { chunkGuidance, sessionGuidance } from "../dispatch/decompose-context";
 import { runReadPrReviewLeg } from "../dispatch/legs/pr-review";
 import {
   runStatus,
   runDispatch,
+  runEstimate,
+  runRaiseBudget,
   runDecompose,
   runBuildDirect,
   runMetaDecompose,
@@ -57,6 +60,9 @@ export interface SubstrateServerOptions {
   /** The soft size dials (ADR 0022) surfaced into the decompose tool descriptions the chief
    *  reads. Defaults to the seed values; the main block loads config/decomposition.yaml. */
   decomposition?: DecompositionConfig;
+  /** The budget dials (ADR 0026 decision 2) — feed the estimate + budget = estimate × headroom.
+   *  Defaults to the seed values; the main block loads config/budget.yaml. */
+  budget?: BudgetConfig;
 }
 
 /**
@@ -65,6 +71,7 @@ export interface SubstrateServerOptions {
  */
 export function createSubstrateServer(service: PlanDispatchService, opts: SubstrateServerOptions = {}): McpServer {
   const decomposition = opts.decomposition ?? DEFAULT_DECOMPOSITION;
+  const budget = opts.budget ?? DEFAULT_BUDGET;
   const server = new McpServer({ name: "substrate", version: "0.1.0" });
 
   server.registerTool(
@@ -283,14 +290,49 @@ export function createSubstrateServer(service: PlanDispatchService, opts: Substr
       title: "Dispatch (approve) a session for build",
       description:
         "Approve the feature for build (ADR 0020) — calling this IS the act of approval (the " +
-        "feature moves planning→ready, approving the whole session plan). The session loop then " +
-        "opens session-main, launches the ready chunks, and builds them into the one session " +
-        "PR; you hand off and step back (use status to watch). Call it ONLY on the owner's " +
-        "explicit go, never on a passing 'looks good', a guess, or silence. The owner approves " +
-        "the session PR on merge.",
+        "feature moves planning→ready, approving the whole session plan). It also locks the " +
+        "feature's budget to estimate × headroom (ADR 0026), so a runtime overspend parks (never " +
+        "hard-kills) — present the `estimate` first so the owner approves with the number in view. " +
+        "The session loop then opens session-main, launches the ready chunks, and builds them into " +
+        "the one session PR; you hand off and step back (use status to watch). Call it ONLY on the " +
+        "owner's explicit go, never on a passing 'looks good', a guess, or silence. The owner " +
+        "approves the session PR on merge.",
       inputSchema: { sessionId: z.string().describe("a session of the feature to approve for build") },
     },
-    async ({ sessionId }) => runDispatch(service, sessionId),
+    async ({ sessionId }) => runDispatch(service, sessionId, budget),
+  );
+
+  server.registerTool(
+    "estimate",
+    {
+      title: "Estimate a feature's build cost (the pre-flight gate forecast)",
+      description:
+        "The pre-flight cost forecast (ADR 0026 decision 2) — present it at the gate as '$X to " +
+        "build, go?' so the owner approves with the number in view. It's chunk count × the REAL " +
+        "historical per-leg averages the instrument records (config seeds at cold start) + the " +
+        "chief's decomposition. A FORECAST for the decision, NOT recorded spend (recorded cost is " +
+        "always the real ledger numbers). On dispatch the budget locks to this estimate × headroom.",
+      inputSchema: { featureId: z.string().describe("the feature to forecast") },
+    },
+    async ({ featureId }) => runEstimate(service, featureId, budget),
+  );
+
+  server.registerTool(
+    "raise_budget",
+    {
+      title: "Raise a budget-parked feature's budget and resume it",
+      description:
+        "Raise a feature's budget and resume it (ADR 0026 decision 2, the 'continue' choice) when " +
+        "a runtime overspend has parked it. Clears the budget park and returns its sessions to " +
+        "building; a session whose chunk independently failed stays parked for you to route. The " +
+        "owner's other options at a budget park need no tool: merge the session PR to ship what's " +
+        "already done (chunks merge into session-main as they land), or abandon the feature.",
+      inputSchema: {
+        featureId: z.string().describe("the budget-parked feature"),
+        budgetUsd: z.number().positive().describe("the new (higher) budget ceiling in USD"),
+      },
+    },
+    async ({ featureId, budgetUsd }) => runRaiseBudget(service, featureId, budgetUsd),
   );
 
   server.registerTool(
@@ -369,6 +411,10 @@ if (import.meta.main) {
   const readPrReview: PrReviewReader = async (prNumber) => runReadPrReviewLeg(prNumber, await loadConfig());
   // Load the decomposition dials (ADR 0022) so the meta_decompose / decompose tool descriptions
   // the chief reads carry the configured soft targets — falls back to the seed defaults if absent.
-  const server = createSubstrateServer(service, { readPrReview, decomposition: loadDecompositionConfig() });
+  const server = createSubstrateServer(service, {
+    readPrReview,
+    decomposition: loadDecompositionConfig(),
+    budget: loadBudgetConfig(),
+  });
   await server.connect(new StdioServerTransport());
 }

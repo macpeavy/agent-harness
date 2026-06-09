@@ -106,8 +106,10 @@ describe("tool discovery", () => {
       "close_session",
       "decompose",
       "dispatch",
+      "estimate",
       "meta_decompose",
       "promote",
+      "raise_budget",
       "redecompose",
       "remove_chunk",
       "remove_edge",
@@ -208,6 +210,44 @@ describe("build_direct (small-feature path, ADR 0026)", () => {
       chunk: { ...CHUNK, tierHint: "strong" },
     });
     expect(plan.getChunk("whole")?.tierHint).toBe("strong");
+  });
+});
+
+describe("budget guard tools (ADR 0026 decision 2)", () => {
+  it("estimate returns the pre-flight forecast ($X to build, go?)", async () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    plan.addChunk(chunk("b"));
+    const body = await callText("estimate", { featureId: "F1" });
+    expect(body).toContain("Estimate for feature F1");
+    expect(body).toContain("2 chunk(s)");
+    expect(body).toMatch(/\$\d+\.\d{4} to build/);
+  });
+
+  it("dispatch locks a budget = estimate × headroom on the feature", async () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    const body = await callText("dispatch", { sessionId: "S1" });
+    expect(body).toContain("budget set to");
+    expect(plan.getFeature("F1")?.budgetUsd).not.toBeNull();
+    expect(plan.getFeature("F1")?.budgetUsd).toBeGreaterThan(0);
+  });
+
+  it("status surfaces a budget-parked session and raise_budget resumes it", async () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    service.dispatchReady("S1"); // building
+    service.setBudget("F1", 1.0);
+    service.parkOverBudget("F1", 2.5); // crossed budget
+
+    const parked = await callText("status", { featureId: "F1" });
+    expect(parked).toContain("BUDGET exceeded");
+    expect(parked).toContain("raise_budget");
+
+    const raised = await callText("raise_budget", { featureId: "F1", budgetUsd: 10 });
+    expect(raised).toContain("Raised feature F1 budget to $10.0000");
+    expect(raised).toContain("Resumed 1");
+    expect(plan.getSession("S1")?.state).toBe("building");
   });
 });
 
@@ -463,8 +503,10 @@ describe("stdio smoke-boot", () => {
         "close_session",
         "decompose",
         "dispatch",
+        "estimate",
         "meta_decompose",
         "promote",
+        "raise_budget",
         "redecompose",
         "remove_chunk",
         "remove_edge",
