@@ -49,7 +49,7 @@ LOADENV := set -a; source .env; set +a;
 # proportionally on attach, ballooning the strip. tput reads the terminal `make up` runs in.
 SIZE := -x $$(tput cols 2>/dev/null || echo 200) -y $$(tput lines 2>/dev/null || echo 50)
 
-.PHONY: up down gateway daemon session-loop chief check migrate db abandon gate-builder status
+.PHONY: up down gateway daemon session-loop chief check migrate db abandon gate-builder status history
 
 up: migrate
 	@if tmux has-session -t $(SESSION) 2>/dev/null; then \
@@ -96,6 +96,11 @@ migrate:
 abandon:
 	@test -n "$(FEATURE)" || { echo "usage: make abandon FEATURE=<featureId>"; exit 1; }
 	bash -c '$(LOADENV) bun run src/cli/abandon.ts $(FEATURE)'
+
+# Feature history: render a complete feature timeline (one shot).
+history:
+	@test -n "$(FEATURE)" || { echo "usage: make history FEATURE=<featureId>"; exit 1; }
+	bash -c '$(LOADENV) bun run src/cli/history.ts $(FEATURE)'
 
 # Fleet status: render live fleet status from the substrate DB (one shot).
 status:
