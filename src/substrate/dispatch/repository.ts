@@ -97,6 +97,13 @@ export class DispatchRepository {
 
     this.sqlite = new Database(dbPath);
     this.sqlite.run("PRAGMA journal_mode = WAL");
+    // Wait, don't throw, on a write-lock contention. `make up` co-launches multiple writer
+    // processes (daemon + session-loop + the chief's MCP server) against this one file; WAL gives
+    // concurrent reads but writers still serialize, and WITHOUT this a writer that loses the race
+    // gets SQLITE_BUSY ("database is locked") immediately and the process exits 1 (the daemon
+    // crash, ADR 0016). The timeout makes it retry for up to 5s — the transactions are tiny, so a
+    // collision clears in milliseconds.
+    this.sqlite.run("PRAGMA busy_timeout = 5000");
     this.db = drizzle(this.sqlite);
     if (opts.migrate !== false) migrate(this.db, { migrationsFolder: MIGRATIONS_DIR });
   }
