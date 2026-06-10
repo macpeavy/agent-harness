@@ -17,7 +17,9 @@
 import { loadConfig, type SubstrateConfig } from "../config";
 import { PlanRepository } from "../substrate/plan";
 import { DispatchRepository } from "../substrate/dispatch";
+import { RuntimeRepository } from "../substrate/runtime";
 import { PlanDispatchService } from "./plan-dispatch";
+import { NotifyPass } from "./notify";
 import { runSessionOpenLeg, type SessionOpenResult } from "./legs/session-open";
 import { ledgerPath, readSpendLedger, spendInWindow } from "./litellm-spend";
 import { isOverBudget } from "./budget";
@@ -44,6 +46,10 @@ export class SessionLoop {
     // The chief's real spend in a window (ADR 0026 decision 2 budget guard) — same ledger reader
     // the daemon uses for per-leg cost. Injected so the loop is testable without a live ledger.
     chiefSpend?: ReconcileCost,
+    // The notify pass (ADR 0024) — fires once per session transition into a signalling state.
+    // Injected so the tick is testable with a fake; null disables it (a test that isn't about
+    // signals shouldn't need to fake one).
+    private readonly notify: Pick<NotifyPass, "runOnce"> | null = null,
   ) {
     this.chiefSpend =
       chiefSpend ?? ((route, start, end) => spendInWindow(readSpendLedger(ledgerPath(config.repoPath)), route, start, end));
@@ -86,6 +92,11 @@ export class SessionLoop {
         this.plan.setSessionError(session.id, message);
       }
     }
+    // The notify pass (ADR 0024), after the advance so a transition signals within ITS tick.
+    // A fired signal is real progress (the stamp changed durable state); a sweep that fires
+    // nothing adds 0, so a session waiting on a chief that never registers still lets the
+    // loop sleep. The pass contains its own per-session failures and never throws.
+    if (this.notify) advanced += await this.notify.runOnce();
     return advanced;
   }
 
@@ -163,6 +174,8 @@ if (import.meta.main) {
   // front (`make migrate`); migrating here too would race the other process (ADR 0016).
   const plan = new PlanRepository(undefined, { migrate: false });
   const dispatch = new DispatchRepository(undefined, { migrate: false });
+  const runtime = new RuntimeRepository(undefined, { migrate: false });
   const service = new PlanDispatchService(plan, dispatch);
-  await new SessionLoop(plan, service, config).run();
+  const notify = new NotifyPass(plan, service, runtime);
+  await new SessionLoop(plan, service, config, undefined, undefined, notify).run();
 }

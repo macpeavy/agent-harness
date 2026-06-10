@@ -574,11 +574,9 @@ export class PlanDispatchService {
 
     if (session.state === "building") {
       if (blocked.length > 0) {
+        // The transition is the durable record; the authoritative signal (the chief wake +
+        // the owner-visible line) is the notify pass's, fired once per transition (ADR 0024).
         this.plan.transitionSession(sessionId, "needs-attention");
-        console.warn(
-          `session ${sessionId} → needs-attention: ${blocked.length} chunk(s) parked/failed ` +
-            `(${blocked.map((c) => c.id).join(", ")}) — route via status/redecompose/promote`,
-        );
       } else if (buildComplete) {
         this.plan.transitionSession(sessionId, "review");
       }

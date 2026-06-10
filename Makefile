@@ -83,8 +83,11 @@ daemon:
 session-loop:
 	bash -c '$(LOADENV) exec bun run session-loop'
 
+# The chief launcher (ADR 0024): a persistent `opencode serve` on AH_CHIEF_PORT (default
+# 4096), the chief session created over REST and registered in the substrate db (so the
+# session loop's notify pass can wake it), then the TUI attached to that exact session.
 chief:
-	bash -c '$(LOADENV) exec opencode --agent chief'
+	bash -c '$(LOADENV) exec bun run src/cli/chief.ts'
 
 # Apply the substrate DB migrations once, before the long-running panes open the db. `up`
 # depends on this so the daemon + session-loop (which open the db with migrate-on-construct

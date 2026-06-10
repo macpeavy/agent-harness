@@ -259,6 +259,34 @@ describe("SessionLoop.runOnce", () => {
     expect(plan.getChunk("a")?.state).toBe("planned"); // S1 made no progress, left to retry
   });
 
+  // ADR 0024: the notify pass runs each tick after the advance, and a fired signal counts
+  // as real progress (the stamp changed durable state).
+  it("runs the injected notify pass after the sweep and counts its fired signals", async () => {
+    plan.createFeature(FEATURE);
+    plan.createSession({ id: "S1", featureId: "F1" });
+    plan.addChunk(chunk("a"));
+    service.approve("S1");
+
+    let calls = 0;
+    const notify = {
+      async runOnce() {
+        calls++;
+        return calls === 1 ? 1 : 0; // fires one signal on the first tick, then nothing
+      },
+    };
+    const notifying = new SessionLoop(plan, service, CONFIG, legs, undefined, notify);
+
+    const first = await notifying.runOnce();
+    expect(calls).toBe(1); // the pass ran with the tick
+    expect(first).toBeGreaterThan(1); // open+dispatch progress AND the fired signal both count
+
+    landChunk("a");
+    await notifying.runOnce();
+    const idle = await notifying.runOnce(); // nothing advances, the pass fires nothing
+    expect(calls).toBe(3);
+    expect(idle).toBe(0); // the loop still sleeps when the pass is quiet
+  });
+
   it("clears a session's recorded error on a later clean tick", async () => {
     plan.createFeature(FEATURE);
     plan.createSession({ id: "S1", featureId: "F1" });

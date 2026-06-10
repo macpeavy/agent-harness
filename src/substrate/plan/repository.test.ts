@@ -352,3 +352,57 @@ describe("planning-amendable: revise + prune (ADR 0020 §5b)", () => {
     expect(() => plan.removeEdge("x", "y")).toThrow("no edge x->y");
   });
 });
+
+describe("signaled_at: the notify pass's exactly-once key (ADR 0024)", () => {
+  // Walk S1 to 'building' so it can enter the signalling states.
+  function seedBuilding(): void {
+    seedFeatureSession();
+    plan.transitionFeature("F1", "ready");
+    plan.transitionSession("S1", "ready");
+    plan.transitionSession("S1", "building");
+  }
+
+  it("a new session starts un-signaled", () => {
+    seedFeatureSession();
+    expect(plan.getSession("S1")?.signaledAt).toBeNull();
+  });
+
+  it("stampSignaled sets the stamp; a transition clears it (re-arming the signal)", () => {
+    seedBuilding();
+    plan.transitionSession("S1", "needs-attention");
+    plan.stampSignaled("S1", 1234);
+    expect(plan.getSession("S1")?.signaledAt).toBe(1234);
+
+    plan.transitionSession("S1", "building"); // the chief routed it
+    expect(plan.getSession("S1")?.signaledAt).toBeNull(); // a re-park will re-signal
+  });
+
+  it("stampSignaled throws on an unknown session", () => {
+    expect(() => plan.stampSignaled("ghost")).toThrow("no session ghost");
+  });
+
+  it("listUnsignaledSessions selects only un-signaled sessions in the given states", () => {
+    seedBuilding();
+    // A second session must be created while its feature is planning — use a second feature.
+    plan.createMetaDecomposition({
+      feature: { id: "F2", title: "Another", description: "intent" },
+      sessions: [{ id: "S2" }],
+    });
+    plan.transitionFeature("F2", "ready");
+    plan.transitionSession("S2", "ready");
+    plan.transitionSession("S2", "building");
+
+    plan.transitionSession("S1", "needs-attention");
+    plan.transitionSession("S2", "review");
+
+    let ids = plan.listUnsignaledSessions(["needs-attention", "review"]).map((s) => s.id);
+    expect(ids).toEqual(["S1", "S2"]);
+
+    plan.stampSignaled("S1");
+    ids = plan.listUnsignaledSessions(["needs-attention", "review"]).map((s) => s.id);
+    expect(ids).toEqual(["S2"]); // S1 is stamped; S2 still pending
+
+    expect(plan.listUnsignaledSessions(["needs-attention"]).map((s) => s.id)).toEqual([]); // state filter holds
+    expect(plan.listUnsignaledSessions([])).toEqual([]); // empty state list selects nothing
+  });
+});

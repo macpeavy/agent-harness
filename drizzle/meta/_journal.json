@@ -71,6 +71,20 @@
       "when": 1781024738526,
       "tag": "0009_real_blonde_phantom",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1781100512638,
+      "tag": "0010_panoramic_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1781100534876,
+      "tag": "0011_backfill_signaled_at",
+      "breakpoints": true
     }
   ]
 }

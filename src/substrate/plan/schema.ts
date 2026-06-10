@@ -50,6 +50,13 @@ export const sessions = sqliteTable("sessions", {
   // budget park (feature-level, between chunks) from a chunk-failure park (a parked dispatch), and
   // prevents the recordOutcomes auto-resume from un-parking it before the owner raises the budget.
   budgetExceededUsd: real("budget_exceeded_usd"),
+  // The notify pass's exactly-once key (ADR 0024): when this session's current signalling
+  // state was signaled (chief woken / owner notified). Null = not yet signaled — the pass
+  // selects on it, fires once, stamps. Every state transition clears it, so entering a
+  // signalling state re-arms the signal (a re-park re-signals) and the transition and the
+  // notify stay decoupled (crash-safe: the loop can die between them without double-firing
+  // or dropping).
+  signaledAt: integer("signaled_at"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
