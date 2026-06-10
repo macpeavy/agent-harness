@@ -35,6 +35,7 @@ describe("loadConfig", () => {
     "AH_AMEND_CAP",
     "AH_AGENT_IDLE_MS",
     "AH_AGENT_TIMEOUT_MS",
+    "AH_PR_POLL_MS",
   ] as const;
   let saved: Record<string, string | undefined>;
 
@@ -86,6 +87,7 @@ describe("loadConfig", () => {
     process.env.AH_AMEND_CAP = "5";
     process.env.AH_AGENT_IDLE_MS = "90000";
     process.env.AH_AGENT_TIMEOUT_MS = "900000";
+    process.env.AH_PR_POLL_MS = "30000";
     const config = await loadConfig();
 
     expect(config).toEqual({
@@ -98,6 +100,7 @@ describe("loadConfig", () => {
       amendCap: 5,
       agentIdleMs: 90000,
       agentTimeoutMs: 900000,
+      prPollMs: 30000,
     });
   });
 

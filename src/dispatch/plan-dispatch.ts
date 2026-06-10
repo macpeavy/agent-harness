@@ -596,15 +596,23 @@ export class PlanDispatchService {
    * session `review → done`; when every session of the feature is done, the feature follows.
    * This is the substrate's record of "the owner merged the session PR" — the merge itself
    * happens on GitHub, the load-bearing safety boundary. Idempotent: closing an already-done
-   * session is a no-op. Throws if the session isn't in `review` (nothing built to merge yet).
+   * session is a no-op (so the loop's merged-PR auto-close and the chief's manual
+   * `close_session` compose in either order, AGENT-45). Throws if the session isn't in
+   * `review` (nothing built to merge yet).
+   *
+   * `notifyChief: false` stamps the done signal as already known — the manual path, where
+   * the CHIEF is the caller and pushing it the news it just recorded would be noise. The
+   * default leaves the signal pending, so the notify pass tells the chief (the auto-close
+   * path: the substrate detected the merge; the chief hasn't heard).
    */
-  closeSession(sessionId: string): { featureId: string } {
+  closeSession(sessionId: string, opts: { notifyChief?: boolean } = {}): { featureId: string } {
     const session = this.plan.getSession(sessionId);
     if (!session) throw new Error(`no session ${sessionId}`);
     if (session.state === "done") return { featureId: session.featureId }; // idempotent
     if (session.state !== "review")
       throw new Error(`session ${sessionId} is ${session.state}, not review — nothing to close`);
     this.plan.transitionSession(sessionId, "done");
+    if (opts.notifyChief === false) this.plan.stampSignaled(sessionId);
     this.completeFeatureIfDone(session.featureId);
     return { featureId: session.featureId };
   }

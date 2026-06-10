@@ -1,12 +1,15 @@
-// The notify pass (ADR 0024) — the deterministic, no-model push that runs each session-loop
-// tick after recordOutcomes. Asymmetric by actor: a session entering `needs-attention` wakes
-// the CHIEF (routing a parked chunk is chief work — promptAsync into its registered session);
-// a session entering `review` notifies the OWNER (merging is owner work — the Notifier seam,
-// default console). Exactly-once per transition via the session's `signaled_at` stamp: the
-// pass selects signalling-state sessions with `signaled_at IS NULL`, fires, stamps; every
-// state transition clears the stamp, so a re-park re-signals. A failed push is swallowed and
-// left un-stamped (retried next tick; a later chief launch picks it up) — push is an
-// accelerator on top of the durable state + `status` pull, never the system of record.
+// The notify pass (ADR 0024 + AGENT-45) — the deterministic, no-model push that runs each
+// session-loop tick after recordOutcomes. Asymmetric by actor: a session entering
+// `needs-attention` wakes the CHIEF (routing a parked chunk is chief work — promptAsync into
+// its registered session); a session entering `review` notifies the OWNER (merging is owner
+// work — the Notifier seam, default console); a session auto-closed to `done` (the loop
+// detected the merged PR) tells the CHIEF its picture changed (the triad's third leg — the
+// manual close_session suppresses this, the chief already knows). Exactly-once per transition
+// via the session's `signaled_at` stamp: the pass selects signalling-state sessions with
+// `signaled_at IS NULL`, fires, stamps; every state transition clears the stamp, so a re-park
+// re-signals. A failed push is swallowed and left un-stamped (retried next tick; a later chief
+// launch picks it up) — push is an accelerator on top of the durable state + `status` pull,
+// never the system of record.
 
 import { OpencodeClient } from "../opencode/client";
 import type { PlanRepository, Session } from "../substrate/plan";
@@ -37,6 +40,18 @@ export interface NeedsAttentionNotice {
   verbs: string[];
 }
 
+/** What the chief needs to update its picture when a session's PR merged on GitHub and the
+ *  substrate closed it (AGENT-45) — no routing, just the new state of the world. */
+export interface SessionDoneNotice {
+  sessionId: string;
+  featureId: string;
+  featureTitle: string;
+  prNumber: number | null;
+  prUrl: string | null;
+  /** The feature's state after the close — 'done' when this was its last session. */
+  featureState: string;
+}
+
 /** The owner channel (ADR 0024) — pluggable; the default is the console line the owner
  *  already watches in the fleet's logs pane (GitHub itself also notifies on the open PR). */
 export interface Notifier {
@@ -64,6 +79,18 @@ const defaultChiefWake: ChiefWake = (target, prompt) =>
 /** The slice of the runtime context the pass needs — where the live chief can be addressed. */
 export interface ChiefDirectory {
   getChief(): ChiefRegistration | null;
+}
+
+/** Render the chief's completion wake (AGENT-45): the PR merged, the session is closed —
+ *  update the picture, don't offer to close it, route nothing. */
+export function chiefDonePrompt(notice: SessionDoneNotice): string {
+  const pr = notice.prUrl ?? (notice.prNumber !== null ? `PR #${notice.prNumber}` : "its PR");
+  return (
+    `[substrate notify] ${pr} was merged on GitHub — session ${notice.sessionId} of feature ` +
+    `"${notice.featureTitle}" is closed (done); feature ${notice.featureId} is now ` +
+    `${notice.featureState}. The substrate already recorded this — do NOT call close_session. ` +
+    `No action needed.\n\n${JSON.stringify(notice, null, 2)}`
+  );
 }
 
 /** Render the chief's wake prompt: what happened + the self-contained payload + the verbs. */
@@ -100,9 +127,13 @@ export class NotifyPass {
 
   async runOnce(): Promise<number> {
     let fired = 0;
-    for (const session of this.plan.listUnsignaledSessions(["needs-attention", "review"])) {
+    for (const session of this.plan.listUnsignaledSessions(["needs-attention", "review", "done"])) {
       const ok =
-        session.state === "needs-attention" ? await this.pushChief(session) : await this.notifyOwner(session);
+        session.state === "needs-attention"
+          ? await this.pushChief(session)
+          : session.state === "review"
+            ? await this.notifyOwner(session)
+            : await this.pushChiefDone(session);
       if (ok) {
         this.plan.stampSignaled(session.id);
         this.loggedMisses.delete(session.id); // a later failure on a NEW transition logs again
@@ -137,6 +168,35 @@ export class NotifyPass {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logMissOnce(session.id, `chief wake failed for session ${session.id} (stale registration?): ${message}`);
+      return false;
+    }
+  }
+
+  // Tell the chief a session's PR merged and the session auto-closed (AGENT-45 — only the
+  // substrate-detected path leaves this signal pending; a manual close_session stamps it).
+  // Same degradation as pushChief: no chief / failed push → pending, picked up later.
+  private async pushChiefDone(session: Session): Promise<boolean> {
+    const chief = this.chiefs.getChief();
+    if (!chief) {
+      this.logMissOnce(session.id, `no chief registered — session ${session.id} closed (done); a later chief sees it via status`);
+      return false;
+    }
+    const feature = this.plan.getFeature(session.featureId);
+    if (!feature) return false;
+    const notice: SessionDoneNotice = {
+      sessionId: session.id,
+      featureId: feature.id,
+      featureTitle: feature.title,
+      prNumber: session.prNumber,
+      prUrl: session.prUrl,
+      featureState: feature.state,
+    };
+    try {
+      await this.wake({ baseUrl: chief.baseUrl, sessionId: chief.sessionId }, chiefDonePrompt(notice));
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logMissOnce(session.id, `chief done-push failed for session ${session.id} (stale registration?): ${message}`);
       return false;
     }
   }

@@ -181,6 +181,55 @@ describe("NotifyPass — review notifies the owner (ADR 0024)", () => {
   });
 });
 
+describe("NotifyPass — an auto-closed session tells the chief (AGENT-45)", () => {
+  it("pushes the chief once with the completion payload after a substrate-detected merge", async () => {
+    seedDispatched();
+    plan.linkSessionPr("S1", { branch: "session-main-S1", prNumber: 42, prUrl: "http://pr/42" });
+    landChunk();
+    plan.stampSignaled("S1"); // the review→owner signal already fired
+
+    service.closeSession("S1"); // the loop's auto-close path: notifyChief defaults true
+
+    expect(await pass().runOnce()).toBe(1);
+    expect(wakes.length).toBe(1);
+    expect(wakes[0]?.prompt).toContain("http://pr/42");
+    expect(wakes[0]?.prompt).toContain("merged on GitHub");
+    expect(wakes[0]?.prompt).toContain("do NOT call close_session");
+    expect(wakes[0]?.prompt).toContain('"featureState": "done"'); // last session → feature completed
+    expect(notices).toEqual([]); // completion is chief-picture work, not an owner ask
+
+    expect(await pass().runOnce()).toBe(0); // stamped — once per transition
+    expect(wakes.length).toBe(1);
+  });
+
+  it("a manual close_session suppresses the push — the chief already knows", async () => {
+    seedDispatched();
+    landChunk();
+    plan.stampSignaled("S1");
+
+    service.closeSession("S1", { notifyChief: false }); // the MCP tool's path
+
+    expect(await pass().runOnce()).toBe(0);
+    expect(wakes).toEqual([]);
+    expect(plan.getSession("S1")?.signaledAt).not.toBeNull(); // stamped as already known
+  });
+
+  it("degrades cleanly with no chief: the done signal stays pending for a later launch", async () => {
+    seedDispatched();
+    landChunk();
+    plan.stampSignaled("S1");
+    service.closeSession("S1");
+    registration = null;
+
+    const p = pass();
+    expect(await p.runOnce()).toBe(0);
+    expect(plan.getSession("S1")?.signaledAt).toBeNull();
+
+    registration = { id: "chief", sessionId: "ses_chief", baseUrl: "http://localhost:4096", registeredAt: 2 };
+    expect(await p.runOnce()).toBe(1); // the next chief hears about it
+  });
+});
+
 describe("chiefWakePrompt", () => {
   it("renders the routing verbs and the JSON payload", () => {
     const prompt = chiefWakePrompt({
