@@ -10,7 +10,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { PlanRepository } from "../substrate/plan";
 import { DispatchRepository } from "../substrate/dispatch";
+import { RuntimeRepository } from "../substrate/runtime";
 import { PlanDispatchService } from "../dispatch/plan-dispatch";
+import { assessHeartbeats, type DriverHealth } from "../dispatch/heartbeat";
 import { loadConfig } from "../config";
 import { DEFAULT_DECOMPOSITION, loadDecompositionConfig, type DecompositionConfig } from "../decomposition-config";
 import { DEFAULT_BUDGET, loadBudgetConfig, type BudgetConfig } from "../budget-config";
@@ -63,6 +65,9 @@ export interface SubstrateServerOptions {
   /** The budget dials (ADR 0026 decision 2) — feed the estimate + budget = estimate × headroom.
    *  Defaults to the seed values; the main block loads config/budget.yaml. */
   budget?: BudgetConfig;
+  /** Assessed driver liveness for `status` (AGENT-44) — the main block reads heartbeats from
+   *  the runtime context; absent (tests) → status omits the driver check. */
+  driverHealth?: () => DriverHealth[];
 }
 
 /**
@@ -281,7 +286,7 @@ export function createSubstrateServer(service: PlanDispatchService, opts: Substr
         "state, the cheap-able-fraction readout, and the parked escalations to route.",
       inputSchema: { featureId: z.string().describe("the feature id to report on") },
     },
-    async ({ featureId }) => runStatus(service, featureId),
+    async ({ featureId }) => runStatus(service, featureId, opts.driverHealth),
   );
 
   server.registerTool(
@@ -408,6 +413,7 @@ if (import.meta.main) {
   const dbPath = process.env.SUBSTRATE_DB;
   const plan = dbPath ? new PlanRepository(dbPath) : new PlanRepository();
   const dispatch = dbPath ? new DispatchRepository(dbPath) : new DispatchRepository();
+  const runtime = dbPath ? new RuntimeRepository(dbPath) : new RuntimeRepository();
   const service = new PlanDispatchService(plan, dispatch);
   // The real PR-review reader, resolved lazily so booting (and the stdio smoke test) doesn't
   // require full gateway/gh config — only an actual address_review call loads it.
@@ -418,6 +424,9 @@ if (import.meta.main) {
     readPrReview,
     decomposition: loadDecompositionConfig(),
     budget: loadBudgetConfig(),
+    // Driver liveness for `status` (AGENT-44) — read fresh per call, so the chief sees the
+    // heartbeat as of NOW, not as of server boot.
+    driverHealth: () => assessHeartbeats(runtime.listHeartbeats()),
   });
   await server.connect(new StdioServerTransport());
 }

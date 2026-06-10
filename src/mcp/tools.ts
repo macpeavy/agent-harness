@@ -15,6 +15,7 @@ import type {
 } from "../dispatch/plan-dispatch";
 import type { CreateChunk, CreateMetaDecomposition, ReviseChunk } from "../substrate/plan";
 import { budgetFromEstimate, type FeatureEstimate } from "../dispatch/budget";
+import { formatAge, type DriverHealth } from "../dispatch/heartbeat";
 import type { BudgetConfig } from "../budget-config";
 
 function usd(n: number): string {
@@ -78,7 +79,7 @@ async function guardAsync(fn: () => Promise<CallToolResult>): Promise<CallToolRe
 }
 
 /** Render a feature's status as a readable digest — feature, then its sessions (ADR 0020). */
-export function renderFeatureStatus(s: FeatureStatus): string {
+export function renderFeatureStatus(s: FeatureStatus, drivers: DriverHealth[] = []): string {
   const budget = s.feature.budgetUsd !== null ? ` — budget ${usd(s.feature.budgetUsd)}` : "";
   const lines: string[] = [`Feature ${s.feature.id} "${s.feature.title}" — ${s.feature.state}${budget}`];
   if (s.sessions.length === 0) lines.push("Sessions: none");
@@ -88,6 +89,16 @@ export function renderFeatureStatus(s: FeatureStatus): string {
   // `review` is build-complete with its PR open for the owner to review/merge (NOT `done` —
   // `done` means the owner already merged it, ADR 0020 §6).
   const attention: string[] = [];
+  // Driver liveness first (AGENT-44): with a dead driver, every in-flight state below is
+  // suspect — `building` means "was building when the driver died", not healthy progress.
+  // Tell the owner; don't wait on work that cannot advance.
+  for (const d of drivers) {
+    if (d.stale)
+      attention.push(
+        `driver '${d.driver}' appears DOWN (last heartbeat ${formatAge(d.ageMs)} ago, pid ${d.pid}) — ` +
+          `in-flight work will not advance; tell the owner to restart it (make up)`,
+      );
+  }
   for (const sess of s.sessions) {
     if (sess.session.state === "review") {
       const pr = sess.session.prNumber ? ` (PR #${sess.session.prNumber})` : "";
@@ -252,8 +263,12 @@ export function runRemoveEdge(service: PlanDispatchService, fromChunkId: string,
 }
 
 /** `status` — a read-only digest of a feature's sessions + their dispatch progress. */
-export function runStatus(service: PlanDispatchService, featureId: string): CallToolResult {
-  return guard(() => text(renderFeatureStatus(service.status(featureId))));
+export function runStatus(
+  service: PlanDispatchService,
+  featureId: string,
+  driverHealth?: () => DriverHealth[],
+): CallToolResult {
+  return guard(() => text(renderFeatureStatus(service.status(featureId), driverHealth?.() ?? [])));
 }
 
 /** Render a feature estimate for the chief to present at the gate (ADR 0026 decision 2). */

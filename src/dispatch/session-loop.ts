@@ -19,6 +19,7 @@ import { PlanRepository } from "../substrate/plan";
 import { DispatchRepository } from "../substrate/dispatch";
 import { RuntimeRepository } from "../substrate/runtime";
 import { PlanDispatchService } from "./plan-dispatch";
+import { Heartbeat } from "./heartbeat";
 import { NotifyPass } from "./notify";
 import { runPrMergedLeg } from "./legs/pr-merged";
 import { runSessionOpenLeg, type SessionOpenResult } from "./legs/session-open";
@@ -207,5 +208,6 @@ if (import.meta.main) {
   const runtime = new RuntimeRepository(undefined, { migrate: false });
   const service = new PlanDispatchService(plan, dispatch);
   const notify = new NotifyPass(plan, service, runtime);
+  new Heartbeat(runtime, "session-loop").start(); // liveness signal (AGENT-44)
   await new SessionLoop(plan, service, config, undefined, undefined, notify).run();
 }
