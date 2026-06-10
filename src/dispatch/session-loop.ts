@@ -20,6 +20,7 @@ import { DispatchRepository } from "../substrate/dispatch";
 import { RuntimeRepository } from "../substrate/runtime";
 import { PlanDispatchService } from "./plan-dispatch";
 import { NotifyPass } from "./notify";
+import { runPrMergedLeg } from "./legs/pr-merged";
 import { runSessionOpenLeg, type SessionOpenResult } from "./legs/session-open";
 import { ledgerPath, readSpendLedger, spendInWindow } from "./litellm-spend";
 import { isOverBudget } from "./budget";
@@ -28,15 +29,21 @@ import type { ReconcileCost } from "./daemon";
 /** The session-level legs the loop drives — injected so the tick is testable with fakes. */
 export interface SessionLegs {
   open(sessionId: string, title: string, config: SubstrateConfig): Promise<SessionOpenResult>;
+  /** Has the owner merged this PR on GitHub? (AGENT-45 — the loop polls in-review sessions.) */
+  prMerged(prNumber: number, config: SubstrateConfig): Promise<boolean>;
 }
 
 const defaultSessionLegs: SessionLegs = {
   open: runSessionOpenLeg,
+  prMerged: runPrMergedLeg,
 };
 
 export class SessionLoop {
   private running = false;
   private readonly chiefSpend: ReconcileCost;
+  // When each in-review session's PR merged state was last probed (AGENT-45) — the gh poll
+  // runs at config.prPollMs cadence, not every tick. In-memory: a restart just re-probes.
+  private readonly lastPrCheck = new Map<string, number>();
 
   constructor(
     private readonly plan: PlanRepository,
@@ -164,7 +171,30 @@ export class SessionLoop {
     const materialised = this.service.dispatchReady(sessionId);
     const stateAfter = this.plan.getSession(sessionId)?.state;
 
-    return opened || flowed.length > 0 || materialised.length > 0 || stateBefore !== stateAfter;
+    // The merged-PR probe (AGENT-45, the notification triad's third leg): a session sitting in
+    // `review` is waiting on the owner's merge, which happens on GitHub — nothing flows back by
+    // itself. Poll its PR at prPollMs cadence; on merge, close the session through the same
+    // path as the manual close_session (review → done, the feature completes on its last
+    // session). closeSession leaves the done signal pending, so the notify pass tells the chief.
+    const closed = stateAfter === "review" ? await this.closeIfMerged(sessionId) : false;
+
+    return opened || closed || flowed.length > 0 || materialised.length > 0 || stateBefore !== stateAfter;
+  }
+
+  // Probe an in-review session's PR merged state, at most once per prPollMs. True only when
+  // the probe ran AND the PR is merged (the session just closed — real progress).
+  private async closeIfMerged(sessionId: string): Promise<boolean> {
+    const session = this.plan.getSession(sessionId);
+    if (!session || session.prNumber === null) return false; // no PR linked — nothing to probe
+    const now = Date.now();
+    if (now - (this.lastPrCheck.get(sessionId) ?? 0) < this.config.prPollMs) return false; // not due
+    this.lastPrCheck.set(sessionId, now);
+
+    if (!(await this.legs.prMerged(session.prNumber, this.config))) return false;
+    this.service.closeSession(sessionId);
+    this.lastPrCheck.delete(sessionId); // done is terminal; drop the cadence entry
+    console.warn(`session ${sessionId} → done: PR #${session.prNumber} merged on GitHub (auto-closed)`);
+    return true;
   }
 }
 

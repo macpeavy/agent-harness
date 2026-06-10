@@ -18,6 +18,7 @@ const CONFIG = {
   amendCap: 3,
   agentIdleMs: 120_000,
   agentTimeoutMs: 1_800_000,
+  prPollMs: 0, // every tick is "due" — tests drive the cadence explicitly where it matters
 } satisfies SubstrateConfig;
 
 let dir: string;
@@ -25,6 +26,8 @@ let plan: PlanRepository;
 let dispatch: DispatchRepository;
 let service: PlanDispatchService;
 let opened: string[];
+let merged: Set<number>; // PR numbers gh would report MERGED
+let prProbes: number[]; // every prMerged probe, in order
 let legs: SessionLegs;
 
 beforeEach(() => {
@@ -34,11 +37,18 @@ beforeEach(() => {
   dispatch = new DispatchRepository(dbPath);
   service = new PlanDispatchService(plan, dispatch);
   opened = [];
-  // Fake session-open: records the call and returns canned branch/PR linkage (no real git).
+  merged = new Set();
+  prProbes = [];
+  // Fake legs: session-open records the call and returns canned branch/PR linkage; prMerged
+  // reports from the `merged` set and records each probe (no real git/gh).
   legs = {
     async open(sessionId) {
       opened.push(sessionId);
       return { branch: `session-main-${sessionId}`, prNumber: 100, prUrl: `http://pr/${sessionId}` };
+    },
+    async prMerged(prNumber) {
+      prProbes.push(prNumber);
+      return merged.has(prNumber);
     },
   };
 });
@@ -247,6 +257,7 @@ describe("SessionLoop.runOnce", () => {
         opened.push(sessionId);
         return { branch: `session-main-${sessionId}`, prNumber: 100, prUrl: `http://pr/${sessionId}` };
       },
+      prMerged: async () => false,
     };
     const loopWithThrow = new SessionLoop(plan, service, CONFIG, throwingLegs);
 
@@ -257,6 +268,87 @@ describe("SessionLoop.runOnce", () => {
     expect(plan.getChunk("b")?.state).toBe("dispatched"); // S2 made real progress
     expect(plan.getSession("S1")?.lastError).toContain("gh pr create boom"); // recorded for the chief
     expect(plan.getChunk("a")?.state).toBe("planned"); // S1 made no progress, left to retry
+  });
+
+  // AGENT-45: the merged-PR probe — a session in `review` auto-closes when its PR merges on
+  // GitHub, with no owner-to-chief relay.
+  describe("merged-PR auto-close", () => {
+    // Walk S1 to review: approve, open + dispatch, land the chunk, reap.
+    async function seedReview(l = loop()): Promise<SessionLoop> {
+      plan.createFeature(FEATURE);
+      plan.createSession({ id: "S1", featureId: "F1" });
+      plan.addChunk(chunk("a"));
+      service.approve("S1");
+      await l.runOnce();
+      landChunk("a");
+      await l.runOnce();
+      expect(plan.getSession("S1")?.state).toBe("review");
+      return l;
+    }
+
+    it("closes the session (and completes the feature) when the PR is merged", async () => {
+      const l = await seedReview();
+      merged.add(100);
+
+      const advanced = await l.runOnce();
+
+      expect(advanced).toBeGreaterThan(0); // the close is real progress
+      expect(plan.getSession("S1")?.state).toBe("done");
+      expect(plan.getFeature("F1")?.state).toBe("done"); // its last session merged
+      expect(plan.getSession("S1")?.signaledAt).toBeNull(); // the done signal is left pending for the chief
+      expect(prProbes).toContain(100);
+
+      const probesAfterClose = prProbes.length;
+      expect(await l.runOnce()).toBe(0); // done is terminal — no more probes, loop sleeps
+      expect(prProbes.length).toBe(probesAfterClose);
+    });
+
+    it("an unmerged PR leaves the session in review and counts no progress", async () => {
+      const l = await seedReview();
+
+      const advanced = await l.runOnce(); // probes (prPollMs 0 → due), finds OPEN
+
+      expect(advanced).toBe(0); // a probe that changes nothing lets the loop sleep
+      expect(plan.getSession("S1")?.state).toBe("review");
+      expect(prProbes.length).toBeGreaterThan(0);
+    });
+
+    it("probes at prPollMs cadence, not every tick", async () => {
+      const slow = new SessionLoop(plan, service, { ...CONFIG, prPollMs: 60_000 }, legs);
+      await seedReview(slow);
+      const baseline = prProbes.length; // the first due probe fired as review was reached
+
+      await slow.runOnce();
+      await slow.runOnce();
+
+      expect(prProbes.length).toBe(baseline); // not due again within the window
+    });
+
+    it("a review session with no PR linked is not probed", async () => {
+      plan.createFeature(FEATURE);
+      plan.createSession({ id: "S1", featureId: "F1" });
+      plan.transitionFeature("F1", "ready");
+      plan.transitionSession("S1", "ready");
+      plan.transitionSession("S1", "building");
+      plan.transitionSession("S1", "review"); // walked by hand
+      // A branch but no PR number (e.g. the open leg crashed between push and PR create on a
+      // legacy row) — the loop must not probe gh with a null PR number.
+      plan.linkSessionPr("S1", { branch: "session-main-S1" });
+
+      await loop().runOnce();
+
+      expect(prProbes).toEqual([]);
+    });
+
+    it("composes idempotently with the manual close_session", async () => {
+      const l = await seedReview();
+      merged.add(100);
+      await l.runOnce(); // auto-closes
+
+      // The chief calls close_session afterward (it hadn't heard yet) — a harmless no-op.
+      expect(service.closeSession("S1", { notifyChief: false }).featureId).toBe("F1");
+      expect(plan.getSession("S1")?.state).toBe("done");
+    });
   });
 
   // ADR 0024: the notify pass runs each tick after the advance, and a fired signal counts
@@ -300,6 +392,7 @@ describe("SessionLoop.runOnce", () => {
         opened.push(sessionId);
         return { branch: `session-main-${sessionId}`, prNumber: 100, prUrl: `http://pr/${sessionId}` };
       },
+      prMerged: async () => false,
     };
     const flakyLoop = new SessionLoop(plan, service, CONFIG, flakyLegs);
 

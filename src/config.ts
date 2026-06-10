@@ -33,6 +33,10 @@ export interface SubstrateConfig {
    *  producing, so a stuck-but-noisy loop can't bill forever. Generous; the idle window is the
    *  usual stop. Default 30 min. */
   agentTimeoutMs: number;
+  /** How often (ms) the session loop re-checks an in-review session's PR merged state on
+   *  GitHub (AGENT-45) — one `gh pr view` per review session per interval, so detection
+   *  latency trades directly against gh chatter. Default 1 min. */
+  prPollMs: number;
 }
 
 // A positive integer from env, or the fallback (a malformed value doesn't silently
@@ -78,5 +82,6 @@ export async function loadConfig(): Promise<SubstrateConfig> {
     amendCap: intFromEnv(process.env.AH_AMEND_CAP, 3),
     agentIdleMs: intFromEnv(process.env.AH_AGENT_IDLE_MS, 120_000),
     agentTimeoutMs: intFromEnv(process.env.AH_AGENT_TIMEOUT_MS, 1_800_000),
+    prPollMs: intFromEnv(process.env.AH_PR_POLL_MS, 60_000),
   };
 }

@@ -350,7 +350,9 @@ export async function runAddressReview(
  *  GitHub (the gate); this is the substrate's record of it. */
 export function runCloseSession(service: PlanDispatchService, sessionId: string): CallToolResult {
   return guard(() => {
-    const { featureId } = service.closeSession(sessionId);
+    // notifyChief: false — the chief IS the caller here; pushing it the news it just
+    // recorded would be noise. The loop's merged-PR auto-close uses the notifying default.
+    const { featureId } = service.closeSession(sessionId, { notifyChief: false });
     return text(`Closed session ${sessionId} (owner merged its PR). Feature ${featureId} advances if it was its last.`);
   });
 }

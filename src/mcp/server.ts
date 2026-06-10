@@ -357,7 +357,10 @@ export function createSubstrateServer(service: PlanDispatchService, opts: Substr
       description:
         "Record that the owner merged the session PR (ADR 0020 §6): the session moves " +
         "`review → done`, and the feature completes when its last session merges. The merge " +
-        "itself is the owner's, on GitHub (the gate) — call this only after they've merged.",
+        "itself is the owner's, on GitHub (the gate) — call this only after they've merged. " +
+        "Usually you DON'T need it: the substrate polls each in-review session's PR and " +
+        "auto-closes on merge (you'll be told). This is the manual fallback; calling it after " +
+        "an auto-close is a harmless no-op.",
       inputSchema: { sessionId: z.string().describe("the session whose PR the owner merged") },
     },
     async ({ sessionId }) => runCloseSession(service, sessionId),
