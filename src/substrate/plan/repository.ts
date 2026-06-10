@@ -11,7 +11,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import {
@@ -387,6 +387,50 @@ export class PlanRepository {
       .select()
       .from(sessions)
       .where(and(inArray(sessions.state, states), isNull(sessions.signaledAt)))
+      .orderBy(asc(sessions.createdAt))
+      .all();
+  }
+
+  /**
+   * Record (or clear) the concluded CI failure on a session's PR head, as the in-review
+   * probe saw it. Pass nulls when the PR went green / checks restarted (a re-push) — that
+   * clears the failure AND the signal stamp, so the next failing head re-signals.
+   */
+  setCiFailure(id: string, headSha: string | null, failedChecks: string[] | null): void {
+    const row = this.db.select({ id: sessions.id }).from(sessions).where(eq(sessions.id, id)).get();
+    if (!row) throw new Error(`no session ${id}`);
+    this.db
+      .update(sessions)
+      .set({
+        ciFailedSha: headSha,
+        ciFailedChecks: failedChecks === null ? null : JSON.stringify(failedChecks),
+        ...(headSha === null ? { ciSignaledSha: null } : {}),
+        updatedAt: Date.now(),
+      })
+      .where(eq(sessions.id, id))
+      .run();
+  }
+
+  /** Stamp a session's CI failure as signaled for this head SHA — the CI leg's exactly-once
+   *  key (a re-push records a NEW ci_failed_sha, which un-matches the stamp and re-arms). */
+  stampCiSignaled(id: string, headSha: string): void {
+    const row = this.db.select({ id: sessions.id }).from(sessions).where(eq(sessions.id, id)).get();
+    if (!row) throw new Error(`no session ${id}`);
+    this.db.update(sessions).set({ ciSignaledSha: headSha, updatedAt: Date.now() }).where(eq(sessions.id, id)).run();
+  }
+
+  /** The sessions with a recorded CI failure that hasn't been signaled for its head SHA —
+   *  the notify pass's CI sweep. Oldest first. */
+  listUnsignaledCiFailures(): Session[] {
+    return this.db
+      .select()
+      .from(sessions)
+      .where(
+        and(
+          isNotNull(sessions.ciFailedSha),
+          or(isNull(sessions.ciSignaledSha), ne(sessions.ciSignaledSha, sessions.ciFailedSha)),
+        ),
+      )
       .orderBy(asc(sessions.createdAt))
       .all();
   }

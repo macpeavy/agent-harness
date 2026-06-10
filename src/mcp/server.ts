@@ -36,6 +36,7 @@ import {
   runRemoveSession,
   runRemoveEdge,
   runAddressReview,
+  runAmendChunk,
   runCloseSession,
   type PrReviewReader,
 } from "./tools";
@@ -353,6 +354,29 @@ export function createSubstrateServer(service: PlanDispatchService, opts: Substr
       inputSchema: { sessionId: z.string().describe("the session whose PR review to address (must be in review)") },
     },
     async ({ sessionId }) => runAddressReview(service, opts.readPrReview, sessionId),
+  );
+
+  server.registerTool(
+    "amend_chunk",
+    {
+      title: "Amend a built chunk with diagnosed findings",
+      description:
+        "Route findings YOU diagnosed into a built chunk's amend cycle — the repair verb on a " +
+        "session in `review`. Use it when the substrate wakes you with a CI failure on the " +
+        "session PR (pick the chunk whose surface owns the failure, pass the failing checks + " +
+        "what to fix), or when any defect is found on built work. The builder amends against " +
+        "your findings, the reviewer re-reviews, and the fix lands in session-main — the PR and " +
+        "its checks update; you don't relay to the owner. NOT for parked chunks (use " +
+        "promote/redecompose) or owner PR comments (use address_review). If the failure needs " +
+        "work no existing chunk owns, surface it to the owner instead — the plan is frozen.",
+      inputSchema: {
+        chunkId: z.string().describe("the built chunk to reopen (its session must be in review)"),
+        findings: z
+          .string()
+          .describe("what's wrong and what to fix — e.g. the failing check names + the relevant log lines"),
+      },
+    },
+    async ({ chunkId, findings }) => runAmendChunk(service, chunkId, findings),
   );
 
   server.registerTool(

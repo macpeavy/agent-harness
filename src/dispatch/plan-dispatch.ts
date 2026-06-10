@@ -719,6 +719,33 @@ export class PlanDispatchService {
   }
 
   /**
+   * Route diagnosed findings into a built chunk's amend cycle — the chief's general repair
+   * verb on a session in `review` (the CI-failure path, or any defect the chief diagnoses on
+   * a built session). The same channel owner review comments flow through (`addressReview`),
+   * minus the PR-comment read: the findings come from the chief's own judgment (a CI log, a
+   * reported defect). Reopens the chunk's done dispatch with the findings as pendingFindings;
+   * the daemon amends, the reviewer re-reviews, the fix squash-merges into session-main and
+   * the PR (and its checks) update. The session stays in `review`. Not for parked chunks —
+   * an escalated chunk routes via promote/redecompose.
+   */
+  amendChunk(chunkId: string, findings: string): { sessionId: string; dispatchId: string } {
+    if (findings.trim().length === 0) throw new Error(`amendChunk: findings are empty — nothing to amend against`);
+    const chunk = this.plan.getChunk(chunkId);
+    if (!chunk) throw new Error(`no chunk ${chunkId}`);
+    const session = this.plan.getSession(chunk.sessionId);
+    if (!session) throw new Error(`no session ${chunk.sessionId}`);
+    if (session.state !== "review")
+      throw new Error(`session ${session.id} is ${session.state}, not review — amend_chunk repairs a BUILT session`);
+    const dispatch = chunk.dispatchId ? this.dispatch.get(chunk.dispatchId) : null;
+    if (!chunk.dispatchId || !dispatch) throw new Error(`chunk ${chunkId} has no dispatch to amend`);
+    if (dispatch.state !== "done")
+      throw new Error(`chunk ${chunkId} dispatch is ${dispatch.state}, not done — only a built chunk is amendable`);
+
+    this.dispatch.reopenForReview(chunk.dispatchId, findings);
+    return { sessionId: session.id, dispatchId: chunk.dispatchId };
+  }
+
+  /**
    * A read-only digest of a feature for the owner/chief (ADR 0020 `status`): the feature, then
    * each session with its chunks, the cheap-able readout over the session's dispatches, and
    * the parked escalations to route. Cross-context read — the service is the layer allowed to

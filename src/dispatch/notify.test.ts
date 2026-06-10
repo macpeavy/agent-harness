@@ -230,6 +230,65 @@ describe("NotifyPass — an auto-closed session tells the chief (AGENT-45)", () 
   });
 });
 
+describe("NotifyPass — a CI failure on a built session wakes the chief (the CI leg)", () => {
+  // S1 in review with a PR and a recorded CI failure on sha-1.
+  function seedCiFailure(): void {
+    seedDispatched();
+    plan.linkSessionPr("S1", { branch: "session-main-S1", prNumber: 42, prUrl: "http://pr/42" });
+    landChunk();
+    plan.stampSignaled("S1"); // the review→owner signal already fired
+    plan.setCiFailure("S1", "sha-1", ["typecheck", "test"]);
+  }
+
+  it("wakes the chief once per failing head with the checks + amend_chunk routing", async () => {
+    seedCiFailure();
+
+    expect(await pass().runOnce()).toBe(1);
+    expect(wakes.length).toBe(1);
+    expect(wakes[0]?.prompt).toContain("CI failed");
+    expect(wakes[0]?.prompt).toContain("typecheck, test");
+    expect(wakes[0]?.prompt).toContain("amend_chunk");
+    expect(wakes[0]?.prompt).toContain('"surface": "src/a.ts"'); // the chunk map rides along
+    expect(notices).toEqual([]); // a CI failure is chief work, not an owner ask
+
+    expect(await pass().runOnce()).toBe(0); // stamped for sha-1 — once per head
+    expect(wakes.length).toBe(1);
+  });
+
+  it("a re-push that fails again (new head) re-signals", async () => {
+    seedCiFailure();
+    const p = pass();
+    await p.runOnce();
+    expect(wakes.length).toBe(1);
+
+    plan.setCiFailure("S1", "sha-2", ["test"]); // the probe recorded a new failing head
+    expect(await p.runOnce()).toBe(1);
+    expect(wakes.length).toBe(2);
+    expect(wakes[1]?.prompt).toContain("sha-2");
+  });
+
+  it("degrades cleanly with no chief: the failure stays pending for a later launch", async () => {
+    seedCiFailure();
+    registration = null;
+
+    const p = pass();
+    expect(await p.runOnce()).toBe(0);
+    expect(plan.getSession("S1")?.ciSignaledSha).toBeNull(); // un-stamped, still pending
+
+    registration = { id: "chief", sessionId: "ses_chief", baseUrl: "http://localhost:4096", registeredAt: 2 };
+    expect(await p.runOnce()).toBe(1);
+  });
+
+  it("a failed wake is swallowed and the signal stays pending", async () => {
+    seedCiFailure();
+    const p = pass(async () => {
+      throw new Error("connection refused");
+    });
+    expect(await p.runOnce()).toBe(0); // must not throw
+    expect(plan.getSession("S1")?.ciSignaledSha).toBeNull();
+  });
+});
+
 describe("chiefWakePrompt", () => {
   it("renders the routing verbs and the JSON payload", () => {
     const prompt = chiefWakePrompt({

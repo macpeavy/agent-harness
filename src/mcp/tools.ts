@@ -360,6 +360,19 @@ export async function runAddressReview(
   });
 }
 
+/** `amend_chunk` — route diagnosed findings (a CI failure, a reported defect) into a built
+ *  chunk's amend cycle. The chief's general repair verb on a session in review. */
+export function runAmendChunk(service: PlanDispatchService, chunkId: string, findings: string): CallToolResult {
+  return guard(() => {
+    const { sessionId, dispatchId } = service.amendChunk(chunkId, findings);
+    return text(
+      `Reopened chunk ${chunkId} (dispatch ${dispatchId}) with your findings. The builder amends, ` +
+        `the reviewer re-reviews, and the fix lands in session ${sessionId}'s PR (its checks re-run). ` +
+        `Watch via status.`,
+    );
+  });
+}
+
 /** `close_session` — record the owner's merge of the session PR (ADR 0020 §6): session
  *  `review → done`, completing the feature when its last session merges. The merge is on
  *  GitHub (the gate); this is the substrate's record of it. */
