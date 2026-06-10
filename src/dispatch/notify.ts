@@ -68,13 +68,14 @@ export interface ChiefDirectory {
 
 /** Render the chief's wake prompt: what happened + the self-contained payload + the verbs. */
 export function chiefWakePrompt(notice: NeedsAttentionNotice): string {
-  const what = notice.budgetExceededUsd !== null ? "is budget-parked" : "has parked chunk(s) to route";
+  const budgetParked = notice.budgetExceededUsd !== null;
+  const action = budgetParked
+    ? "A budget park is the owner's call (raise_budget / ship what's built / abandon) — relay it."
+    : `Route it (${notice.verbs.join(" / ")}); call \`status\` on feature ${notice.featureId} for full context.`;
   return (
     `[substrate notify] Session ${notice.sessionId} of feature "${notice.featureTitle}" ` +
-    `entered needs-attention — it ${what}.\n\n` +
-    `${JSON.stringify(notice, null, 2)}\n\n` +
-    `Route it (${notice.verbs.join(" / ")}); call \`status\` on feature ${notice.featureId} for full context. ` +
-    `A budget park is the owner's call (raise_budget / ship what's built / abandon) — relay it.`
+    `entered needs-attention — it ${budgetParked ? "is budget-parked" : "has parked chunk(s) to route"}.\n\n` +
+    `${JSON.stringify(notice, null, 2)}\n\n${action}`
   );
 }
 
@@ -113,20 +114,21 @@ export class NotifyPass {
 
   // Wake the registered chief with the parked-chunk payload. False = no live chief / the
   // push failed — swallowed (the durable state is the floor), un-stamped so a later tick or
-  // a later chief launch picks it up.
+  // a later chief launch picks it up. The registration check comes first: with no chief up,
+  // the tick shouldn't pay the cross-context status read just to throw the payload away.
   private async pushChief(session: Session): Promise<boolean> {
-    const notice = this.needsAttentionNotice(session);
-    if (!notice) return false; // feature row missing — leave for the tick error surface
-
-    // Ambient owner awareness (ADR 0024 open question, lean yes): one console line so the
-    // owner sees the chief was handed work, without being asked to act.
     const chief = this.chiefs.getChief();
     if (!chief) {
       this.logMissOnce(session.id, `no chief registered — session ${session.id} waits in needs-attention (status/pull still works)`);
       return false;
     }
+    const notice = this.needsAttentionNotice(session);
+    if (!notice) return false; // feature row missing — leave for the tick error surface
+
     try {
       await this.wake({ baseUrl: chief.baseUrl, sessionId: chief.sessionId }, chiefWakePrompt(notice));
+      // Ambient owner awareness (ADR 0024 open question, lean yes): one console line so the
+      // owner sees the chief was handed work, without being asked to act.
       console.warn(
         `session ${session.id} → needs-attention: woke the chief (${notice.parked.length} parked chunk(s)` +
           `${notice.budgetExceededUsd !== null ? ", budget-parked" : ""})`,
