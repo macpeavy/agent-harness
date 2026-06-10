@@ -57,6 +57,16 @@ export const sessions = sqliteTable("sessions", {
   // notify stay decoupled (crash-safe: the loop can die between them without double-firing
   // or dropping).
   signaledAt: integer("signaled_at"),
+  // CI state on the session PR, written by the in-review probe. A session in `review` runs
+  // its checks on GitHub — nothing flows back by itself, so the probe records a concluded
+  // failure here and the notify pass wakes the chief to route it (amend_chunk). Keyed by
+  // head SHA: the signal fires once per failing head (ci_signaled_sha is the stamp), and a
+  // re-push re-arms it. All null = no known failure (green, pending, or no checks).
+  ciFailedSha: text("ci_failed_sha"),
+  // The failing check names, JSON array — payload for the chief's wake.
+  ciFailedChecks: text("ci_failed_checks"),
+  // The head SHA whose failure was already signaled — the CI leg's exactly-once key.
+  ciSignaledSha: text("ci_signaled_sha"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
