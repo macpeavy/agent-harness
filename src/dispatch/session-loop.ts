@@ -21,7 +21,7 @@ import { RuntimeRepository } from "../substrate/runtime";
 import { PlanDispatchService } from "./plan-dispatch";
 import { Heartbeat } from "./heartbeat";
 import { NotifyPass } from "./notify";
-import { runPrMergedLeg } from "./legs/pr-merged";
+import { runPrProbeLeg, type PrProbe } from "./legs/pr-merged";
 import { runSessionOpenLeg, type SessionOpenResult } from "./legs/session-open";
 import { ledgerPath, readSpendLedger, spendInWindow } from "./litellm-spend";
 import { isOverBudget } from "./budget";
@@ -30,13 +30,14 @@ import type { ReconcileCost } from "./daemon";
 /** The session-level legs the loop drives — injected so the tick is testable with fakes. */
 export interface SessionLegs {
   open(sessionId: string, title: string, config: SubstrateConfig): Promise<SessionOpenResult>;
-  /** Has the owner merged this PR on GitHub? (AGENT-45 — the loop polls in-review sessions.) */
-  prMerged(prNumber: number, config: SubstrateConfig): Promise<boolean>;
+  /** What GitHub knows about an in-review session's PR: merged? failing checks? (AGENT-45
+   *  + the CI leg — the loop polls at prPollMs cadence.) */
+  probePr(prNumber: number, config: SubstrateConfig): Promise<PrProbe>;
 }
 
 const defaultSessionLegs: SessionLegs = {
   open: runSessionOpenLeg,
-  prMerged: runPrMergedLeg,
+  probePr: runPrProbeLeg,
 };
 
 export class SessionLoop {
@@ -172,30 +173,48 @@ export class SessionLoop {
     const materialised = this.service.dispatchReady(sessionId);
     const stateAfter = this.plan.getSession(sessionId)?.state;
 
-    // The merged-PR probe (AGENT-45, the notification triad's third leg): a session sitting in
-    // `review` is waiting on the owner's merge, which happens on GitHub — nothing flows back by
-    // itself. Poll its PR at prPollMs cadence; on merge, close the session through the same
+    // The session-PR probe (AGENT-45 + the CI leg): a session sitting in `review` is waiting
+    // on GitHub — the owner's merge and the PR's checks both happen there, and neither flows
+    // back by itself. Poll at prPollMs cadence; on merge, close the session through the same
     // path as the manual close_session (review → done, the feature completes on its last
-    // session). closeSession leaves the done signal pending, so the notify pass tells the chief.
-    const closed = stateAfter === "review" ? await this.closeIfMerged(sessionId) : false;
+    // session — closeSession leaves the done signal pending so the notify pass tells the
+    // chief); on a concluded check failure, record the failing head so the notify pass wakes
+    // the chief to route a fix (amend_chunk).
+    const probed = stateAfter === "review" ? await this.probeReviewPr(sessionId) : false;
 
-    return opened || closed || flowed.length > 0 || materialised.length > 0 || stateBefore !== stateAfter;
+    return opened || probed || flowed.length > 0 || materialised.length > 0 || stateBefore !== stateAfter;
   }
 
-  // Probe an in-review session's PR merged state, at most once per prPollMs. True only when
-  // the probe ran AND the PR is merged (the session just closed — real progress).
-  private async closeIfMerged(sessionId: string): Promise<boolean> {
+  // Probe an in-review session's PR, at most once per prPollMs. True when the probe changed
+  // durable state (closed the session, or recorded/cleared a CI failure) — real progress.
+  private async probeReviewPr(sessionId: string): Promise<boolean> {
     const session = this.plan.getSession(sessionId);
     if (!session || session.prNumber === null) return false; // no PR linked — nothing to probe
     const now = Date.now();
     if (now - (this.lastPrCheck.get(sessionId) ?? 0) < this.config.prPollMs) return false; // not due
     this.lastPrCheck.set(sessionId, now);
 
-    if (!(await this.legs.prMerged(session.prNumber, this.config))) return false;
-    this.service.closeSession(sessionId);
-    this.lastPrCheck.delete(sessionId); // done is terminal; drop the cadence entry
-    console.warn(`session ${sessionId} → done: PR #${session.prNumber} merged on GitHub (auto-closed)`);
-    return true;
+    const probe = await this.legs.probePr(session.prNumber, this.config);
+    if (probe.merged) {
+      this.service.closeSession(sessionId);
+      this.lastPrCheck.delete(sessionId); // done is terminal; drop the cadence entry
+      console.warn(`session ${sessionId} → done: PR #${session.prNumber} merged on GitHub (auto-closed)`);
+      return true;
+    }
+
+    // CI state, keyed by head SHA. A concluded failure is recorded once per head (re-probes
+    // of the same failing head change nothing); green/pending clears a stale record so a
+    // later failing head re-arms the signal.
+    if (probe.failedChecks.length > 0 && probe.headSha !== null) {
+      if (session.ciFailedSha === probe.headSha) return false; // already recorded for this head
+      this.plan.setCiFailure(sessionId, probe.headSha, probe.failedChecks);
+      return true;
+    }
+    if (session.ciFailedSha !== null) {
+      this.plan.setCiFailure(sessionId, null, null); // green again (a re-push or a re-run)
+      return true;
+    }
+    return false;
   }
 }
 

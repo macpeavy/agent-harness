@@ -40,6 +40,21 @@ export interface NeedsAttentionNotice {
   verbs: string[];
 }
 
+/** What the chief needs to route a CI failure on a built session's PR — the failing checks
+ *  and the head they failed on; the fix path is amend_chunk into the amend cycle. */
+export interface CiFailureNotice {
+  sessionId: string;
+  featureId: string;
+  featureTitle: string;
+  prNumber: number | null;
+  prUrl: string | null;
+  headSha: string;
+  failedChecks: string[];
+  /** The session's chunks (id + surface), so the chief can pick the amend target without a
+   *  status round-trip. */
+  chunks: { chunkId: string; surface: string }[];
+}
+
 /** What the chief needs to update its picture when a session's PR merged on GitHub and the
  *  substrate closed it (AGENT-45) — no routing, just the new state of the world. */
 export interface SessionDoneNotice {
@@ -79,6 +94,22 @@ const defaultChiefWake: ChiefWake = (target, prompt) =>
 /** The slice of the runtime context the pass needs — where the live chief can be addressed. */
 export interface ChiefDirectory {
   getChief(): ChiefRegistration | null;
+}
+
+/** Render the chief's CI-failure wake: the built session's checks failed on GitHub — diagnose
+ *  and route the fix into the amend cycle via amend_chunk. */
+export function chiefCiFailurePrompt(notice: CiFailureNotice): string {
+  const pr = notice.prUrl ?? (notice.prNumber !== null ? `PR #${notice.prNumber}` : "its PR");
+  return (
+    `[substrate notify] CI failed on ${pr} (session ${notice.sessionId} of feature ` +
+    `"${notice.featureTitle}", head ${notice.headSha.slice(0, 9)}): ` +
+    `${notice.failedChecks.join(", ")}.\n\n` +
+    `${JSON.stringify(notice, null, 2)}\n\n` +
+    `Diagnose which chunk owns the failure (read the check logs on the PR if needed) and route ` +
+    `the fix with amend_chunk(chunkId, findings) — the builder amends, the reviewer re-reviews, ` +
+    `the fix lands in session-main and the checks re-run. If the failure needs work no existing ` +
+    `chunk owns, surface it to the owner instead.`
+  );
 }
 
 /** Render the chief's completion wake (AGENT-45): the PR merged, the session is closed —
@@ -140,7 +171,60 @@ export class NotifyPass {
         fired++;
       }
     }
+    // The CI leg — keyed by head SHA, not session state (the session stays in `review` while
+    // its checks fail, so signaled_at can't carry this; ci_signaled_sha does).
+    for (const session of this.plan.listUnsignaledCiFailures()) {
+      const signaledSha = await this.pushChiefCiFailure(session);
+      if (signaledSha !== null) {
+        this.plan.stampCiSignaled(session.id, signaledSha);
+        this.loggedMisses.delete(session.id);
+        fired++;
+      }
+    }
     return fired;
+  }
+
+  // Wake the chief with a CI failure on a built session's PR (the CI leg). Returns the head
+  // SHA that was signaled (to stamp), or null on no-chief / failed push / no payload — left
+  // pending, retried next tick, picked up by a later chief launch.
+  private async pushChiefCiFailure(session: Session): Promise<string | null> {
+    if (session.ciFailedSha === null) return null; // raced a clear between select and push
+    const chief = this.chiefs.getChief();
+    if (!chief) {
+      this.logMissOnce(session.id, `no chief registered — CI failure on session ${session.id} waits (status/pull still works)`);
+      return null;
+    }
+    const feature = this.plan.getFeature(session.featureId);
+    if (!feature) return null;
+
+    let failedChecks: string[] = [];
+    try {
+      failedChecks = session.ciFailedChecks === null ? [] : (JSON.parse(session.ciFailedChecks) as string[]);
+    } catch {
+      // A malformed record still signals — the chief can read the PR; better than silence.
+    }
+    const notice: CiFailureNotice = {
+      sessionId: session.id,
+      featureId: feature.id,
+      featureTitle: feature.title,
+      prNumber: session.prNumber,
+      prUrl: session.prUrl,
+      headSha: session.ciFailedSha,
+      failedChecks,
+      chunks: this.plan.listChunks(session.id).map((c) => ({ chunkId: c.id, surface: c.surface })),
+    };
+    try {
+      await this.wake({ baseUrl: chief.baseUrl, sessionId: chief.sessionId }, chiefCiFailurePrompt(notice));
+      // Ambient owner awareness, same as the needs-attention push: one console line.
+      console.warn(
+        `session ${session.id} CI FAILED on PR #${session.prNumber ?? "?"} (${failedChecks.join(", ") || "see PR"}) — woke the chief to route a fix`,
+      );
+      return session.ciFailedSha;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logMissOnce(session.id, `chief CI-failure wake failed for session ${session.id} (stale registration?): ${message}`);
+      return null;
+    }
   }
 
   // Wake the registered chief with the parked-chunk payload. False = no live chief / the

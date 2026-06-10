@@ -27,6 +27,9 @@ function makeSession(id: string, featureId: string, state: string = "done"): Ses
     lastError: null,
     budgetExceededUsd: null,
     signaledAt: null,
+    ciFailedSha: null,
+    ciFailedChecks: null,
+    ciSignaledSha: null,
     createdAt: 1000,
     updatedAt: 1000,
   };

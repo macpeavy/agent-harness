@@ -406,3 +406,38 @@ describe("signaled_at: the notify pass's exactly-once key (ADR 0024)", () => {
     expect(plan.listUnsignaledSessions([])).toEqual([]); // empty state list selects nothing
   });
 });
+
+describe("CI failure state: recorded per head SHA, signaled once per head", () => {
+  it("setCiFailure records the head + checks; clearing also clears the signal stamp", () => {
+    seedFeatureSession();
+    plan.setCiFailure("S1", "sha-1", ["test", "lint"]);
+    expect(plan.getSession("S1")?.ciFailedSha).toBe("sha-1");
+    expect(plan.getSession("S1")?.ciFailedChecks).toBe('["test","lint"]');
+
+    plan.stampCiSignaled("S1", "sha-1");
+    expect(plan.getSession("S1")?.ciSignaledSha).toBe("sha-1");
+
+    plan.setCiFailure("S1", null, null); // green again
+    expect(plan.getSession("S1")?.ciFailedSha).toBeNull();
+    expect(plan.getSession("S1")?.ciSignaledSha).toBeNull(); // stamp cleared with it
+  });
+
+  it("throws on an unknown session", () => {
+    expect(() => plan.setCiFailure("ghost", "sha", [])).toThrow("no session ghost");
+    expect(() => plan.stampCiSignaled("ghost", "sha")).toThrow("no session ghost");
+  });
+
+  it("listUnsignaledCiFailures selects recorded failures whose head isn't stamped", () => {
+    seedFeatureSession();
+    expect(plan.listUnsignaledCiFailures()).toEqual([]); // nothing recorded
+
+    plan.setCiFailure("S1", "sha-1", ["test"]);
+    expect(plan.listUnsignaledCiFailures().map((s) => s.id)).toEqual(["S1"]); // pending
+
+    plan.stampCiSignaled("S1", "sha-1");
+    expect(plan.listUnsignaledCiFailures()).toEqual([]); // signaled for this head
+
+    plan.setCiFailure("S1", "sha-2", ["test"]); // a re-push fails again
+    expect(plan.listUnsignaledCiFailures().map((s) => s.id)).toEqual(["S1"]); // re-armed
+  });
+});

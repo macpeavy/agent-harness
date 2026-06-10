@@ -106,6 +106,7 @@ describe("tool discovery", () => {
       "add_edge",
       "add_session",
       "address_review",
+      "amend_chunk",
       "build_direct",
       "close_session",
       "decompose",
@@ -391,6 +392,31 @@ describe("address_review + close_session (owner-review loop, ADR 0020 slice 4b)"
     seedFeatureSession();
     expect(await isError("close_session", { sessionId: "S1" })).toBe(true);
   });
+
+  // The chief's general repair verb (the CI-failure route): reopen a built chunk with
+  // findings the chief diagnosed itself — same channel as address_review, no PR read.
+  it("amend_chunk reopens a built chunk with the chief's findings", async () => {
+    sessionInReview();
+
+    const body = await callText("amend_chunk", { chunkId: "a", findings: "the `test` check fails: foo returns null" });
+    expect(body).toContain("Reopened chunk a");
+    expect(dispatch.get("a")?.state).toBe("amending");
+    expect(dispatch.get("a")?.pendingFindings).toContain("foo returns null");
+    expect(plan.getSession("S1")?.state).toBe("review"); // the session holds; only the chunk reopens
+  });
+
+  it("amend_chunk errors on a session that isn't in review (unbuilt work isn't amendable)", async () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a")); // planned — the session never built
+    expect(await isError("amend_chunk", { chunkId: "a", findings: "x" })).toBe(true);
+  });
+
+  it("amend_chunk errors on an unknown chunk or empty findings", async () => {
+    sessionInReview();
+    expect(await isError("amend_chunk", { chunkId: "ghost", findings: "x" })).toBe(true);
+    expect(await isError("amend_chunk", { chunkId: "a", findings: "   " })).toBe(true);
+    expect(dispatch.get("a")?.state).toBe("done"); // nothing reopened
+  });
 });
 
 describe("promote", () => {
@@ -523,6 +549,7 @@ describe("stdio smoke-boot", () => {
         "add_edge",
         "add_session",
         "address_review",
+        "amend_chunk",
         "build_direct",
         "close_session",
         "decompose",

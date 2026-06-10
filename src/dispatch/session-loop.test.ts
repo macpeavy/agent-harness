@@ -27,7 +27,8 @@ let dispatch: DispatchRepository;
 let service: PlanDispatchService;
 let opened: string[];
 let merged: Set<number>; // PR numbers gh would report MERGED
-let prProbes: number[]; // every prMerged probe, in order
+let prProbes: number[]; // every PR probe, in order
+let ciState: { headSha: string | null; failedChecks: string[] }; // what the probe reports for checks
 let legs: SessionLegs;
 
 beforeEach(() => {
@@ -39,16 +40,17 @@ beforeEach(() => {
   opened = [];
   merged = new Set();
   prProbes = [];
-  // Fake legs: session-open records the call and returns canned branch/PR linkage; prMerged
-  // reports from the `merged` set and records each probe (no real git/gh).
+  ciState = { headSha: "sha-1", failedChecks: [] };
+  // Fake legs: session-open records the call and returns canned branch/PR linkage; probePr
+  // reports merged-ness from the `merged` set and checks from `ciState` (no real git/gh).
   legs = {
     async open(sessionId) {
       opened.push(sessionId);
       return { branch: `session-main-${sessionId}`, prNumber: 100, prUrl: `http://pr/${sessionId}` };
     },
-    async prMerged(prNumber) {
+    async probePr(prNumber) {
       prProbes.push(prNumber);
-      return merged.has(prNumber);
+      return { merged: merged.has(prNumber), headSha: ciState.headSha, failedChecks: ciState.failedChecks };
     },
   };
 });
@@ -257,7 +259,7 @@ describe("SessionLoop.runOnce", () => {
         opened.push(sessionId);
         return { branch: `session-main-${sessionId}`, prNumber: 100, prUrl: `http://pr/${sessionId}` };
       },
-      prMerged: async () => false,
+      probePr: async () => ({ merged: false, headSha: null, failedChecks: [] }),
     };
     const loopWithThrow = new SessionLoop(plan, service, CONFIG, throwingLegs);
 
@@ -349,6 +351,40 @@ describe("SessionLoop.runOnce", () => {
       expect(service.closeSession("S1", { notifyChief: false }).featureId).toBe("F1");
       expect(plan.getSession("S1")?.state).toBe("done");
     });
+
+    // The CI leg: a concluded check failure on the session PR is recorded once per head SHA
+    // (the notify pass signals from the record); green/pending clears it; a new failing head
+    // re-records (which re-arms the signal).
+    it("records a concluded check failure once per head, clears on green, re-records a new head", async () => {
+      const l = await seedReview();
+
+      ciState = { headSha: "sha-1", failedChecks: ["typecheck", "test"] };
+      expect(await l.runOnce()).toBeGreaterThan(0); // recorded — durable change
+      expect(plan.getSession("S1")?.ciFailedSha).toBe("sha-1");
+      expect(plan.getSession("S1")?.ciFailedChecks).toBe('["typecheck","test"]');
+
+      expect(await l.runOnce()).toBe(0); // same failing head — nothing new, loop sleeps
+      expect(plan.getSession("S1")?.state).toBe("review"); // a CI failure never moves the state
+
+      ciState = { headSha: "sha-2", failedChecks: [] }; // a fix was pushed, checks green/pending
+      expect(await l.runOnce()).toBeGreaterThan(0); // cleared
+      expect(plan.getSession("S1")?.ciFailedSha).toBeNull();
+
+      ciState = { headSha: "sha-2", failedChecks: ["test"] }; // and then it failed again
+      await l.runOnce();
+      expect(plan.getSession("S1")?.ciFailedSha).toBe("sha-2"); // the new head re-records
+    });
+
+    it("a merge wins over a failing check — the session closes and the CI record is moot", async () => {
+      const l = await seedReview();
+      ciState = { headSha: "sha-1", failedChecks: ["test"] };
+      merged.add(100); // owner merged anyway (e.g. a flaky check they overrode)
+
+      await l.runOnce();
+
+      expect(plan.getSession("S1")?.state).toBe("done");
+      expect(plan.getSession("S1")?.ciFailedSha).toBeNull(); // never recorded — merged short-circuits
+    });
   });
 
   // ADR 0024: the notify pass runs each tick after the advance, and a fired signal counts
@@ -392,7 +428,7 @@ describe("SessionLoop.runOnce", () => {
         opened.push(sessionId);
         return { branch: `session-main-${sessionId}`, prNumber: 100, prUrl: `http://pr/${sessionId}` };
       },
-      prMerged: async () => false,
+      probePr: async () => ({ merged: false, headSha: null, failedChecks: [] }),
     };
     const flakyLoop = new SessionLoop(plan, service, CONFIG, flakyLegs);
 
