@@ -5,4 +5,4 @@
 
 export { RuntimeRepository } from "./repository";
 export type { RegisterChief } from "./repository";
-export type { ChiefRegistration, NewChiefRegistration } from "./schema";
+export type { ChiefRegistration, NewChiefRegistration, DriverHeartbeat, NewDriverHeartbeat } from "./schema";

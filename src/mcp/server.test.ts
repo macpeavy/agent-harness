@@ -23,6 +23,8 @@ let client: Client;
 // for and returns the canned comments — so the tool is exercised without touching GitHub.
 let prReadFor: number[];
 let prComments: { path: string | null; body: string; author?: string }[];
+// Fake driver liveness for the status tests (AGENT-44) — empty means all healthy/unknown.
+let drivers: { driver: string; pid: number; ageMs: number; stale: boolean }[];
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "ah-mcp-"));
@@ -33,12 +35,14 @@ beforeEach(async () => {
 
   prReadFor = [];
   prComments = [];
+  drivers = [];
   const server = createSubstrateServer(service, {
     async readPrReview(prNumber) {
       prReadFor.push(prNumber);
       return prComments;
     },
     decomposition: { chunkTargetLines: 250, sessionTargetLines: 1000 },
+    driverHealth: () => drivers,
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -295,6 +299,26 @@ describe("status", () => {
 
   it("returns a tool error for an unknown feature", async () => {
     expect(await isError("status", { featureId: "ghost" })).toBe(true);
+  });
+
+  // AGENT-44: a dead driver must not read as healthy in-flight work — the chief is told the
+  // driver is down instead of waiting forever on a `building` that cannot advance.
+  it("flags a stale driver heartbeat so building work is not mistaken for progress", async () => {
+    seedFeatureSession();
+    plan.addChunk(chunk("a"));
+    service.dispatchReady("S1"); // building, looks healthy from plan state alone
+    drivers = [{ driver: "daemon", pid: 4242, ageMs: 240_000, stale: true }];
+
+    const body = await callText("status", { featureId: "F1" });
+    expect(body).toContain("NEEDS ATTENTION: driver 'daemon' appears DOWN (last heartbeat 4m ago, pid 4242)");
+    expect(body).toContain("will not advance");
+  });
+
+  it("healthy drivers add no attention noise", async () => {
+    seedFeatureSession();
+    drivers = [{ driver: "daemon", pid: 4242, ageMs: 4_000, stale: false }];
+    const body = await callText("status", { featureId: "F1" });
+    expect(body).not.toContain("appears DOWN");
   });
 });
 

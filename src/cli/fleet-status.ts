@@ -6,8 +6,10 @@
 
 import { DispatchRepository } from "../substrate/dispatch";
 import { PlanRepository } from "../substrate/plan";
+import { RuntimeRepository } from "../substrate/runtime";
 import { PlanDispatchService } from "../dispatch/plan-dispatch";
 import type { FeatureStatus } from "../dispatch/plan-dispatch";
+import { assessHeartbeats, formatAge, type DriverHealth } from "../dispatch/heartbeat";
 import { ledgerPath, readSpendLedger, spendInWindow } from "../dispatch/litellm-spend";
 
 /** The chief's reconciled spend per feature id, or null when it can't be measured (the spend
@@ -35,6 +37,21 @@ function featureTotal(f: FeatureStatus, chiefCost: ChiefCostByFeature): number {
   return legs + (chiefCost.get(f.feature.id) ?? 0);
 }
 
+// The driver names the fleet expects to be beating (AGENT-44) — a missing row renders as
+// "no heartbeat yet" so a never-started driver is visible, not just a crashed one.
+const EXPECTED_DRIVERS = ["daemon", "session-loop"];
+
+/** One compact drivers line: `drv daemon 4s · session-loop ⚠4m` — ⚠ marks stale (down?). */
+export function renderDrivers(drivers: DriverHealth[], expected: string[] = EXPECTED_DRIVERS): string {
+  const byName = new Map(drivers.map((d) => [d.driver, d]));
+  const parts = expected.map((name) => {
+    const d = byName.get(name);
+    if (!d) return `${name} —`;
+    return d.stale ? `${name} ⚠${formatAge(d.ageMs)}` : `${name} ${formatAge(d.ageMs)}`;
+  });
+  return `drv ${parts.join(" · ")}`;
+}
+
 /**
  * Pure render — takes the data, returns a string. No I/O. Tested directly by fleet-status.test.ts.
  *
@@ -42,19 +59,27 @@ function featureTotal(f: FeatureStatus, chiefCost: ChiefCostByFeature): number {
  * watch pane: id, a budget-park alert when tripped, the lead session's state/PR/LOC, and a
  * one-line chunk tally + the real TOTAL cost (chief + legs, ADR 0026). `chiefCost` is the chief's
  * reconciled spend per feature (the CLI reads it from the ledger; null counts as 0 here).
+ * `drivers` is the assessed driver liveness (AGENT-44) — a stale driver gets a DRIVER DOWN
+ * banner above the cards, because every `building` card below it is then suspect.
  */
 export function renderFleet(
   statuses: FeatureStatus[],
   now = new Date().toISOString(),
   chiefCost: ChiefCostByFeature = new Map(),
+  drivers: DriverHealth[] = [],
 ): string {
-  if (statuses.length === 0) return "fleet · (no features)";
+  const driverLine = drivers.length > 0 ? trunc(renderDrivers(drivers), WIDTH) : null;
+  if (statuses.length === 0) return ["fleet · (no features)", ...(driverLine ? [driverLine] : [])].join("\n");
 
   const grand = statuses.reduce((sum, f) => sum + featureTotal(f, chiefCost), 0);
   const active = statuses.filter((f) => f.feature.state !== "abandoned");
   const abandoned = statuses.length - active.length;
 
-  const lines: string[] = [`fleet · ${money(grand)} total`, ""];
+  const lines: string[] = [`fleet · ${money(grand)} total`];
+  if (driverLine) lines.push(driverLine);
+  const stale = drivers.filter((d) => d.stale);
+  if (stale.length > 0) lines.push(`⚠ DRIVER DOWN? in-flight work`, `  will NOT advance — restart`);
+  lines.push("");
 
   for (const f of active) {
     lines.push(`● ${trunc(f.feature.id, WIDTH - 2)}`);
@@ -98,6 +123,7 @@ if (import.meta.main) {
   const dbPath = process.env.SUBSTRATE_DB;
   const plan = dbPath ? new PlanRepository(dbPath) : new PlanRepository();
   const dispatch = dbPath ? new DispatchRepository(dbPath) : new DispatchRepository();
+  const runtime = dbPath ? new RuntimeRepository(dbPath) : new RuntimeRepository();
   const service = new PlanDispatchService(plan, dispatch);
 
   try {
@@ -112,9 +138,10 @@ if (import.meta.main) {
         ledger.length === 0 ? null : spendInWindow(ledger, "chief", s.cost.window.start, s.cost.window.end),
       ]),
     );
-    console.log(renderFleet(statuses, undefined, chiefCost));
+    console.log(renderFleet(statuses, undefined, chiefCost, assessHeartbeats(runtime.listHeartbeats())));
   } finally {
     plan.close();
     dispatch.close();
+    runtime.close();
   }
 }

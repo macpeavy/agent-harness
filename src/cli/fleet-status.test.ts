@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { renderFleet, type ChiefCostByFeature } from "./fleet-status";
+import { renderDrivers, renderFleet, type ChiefCostByFeature } from "./fleet-status";
 import type { FeatureStatus, SessionStatus } from "../dispatch/plan-dispatch";
 
 const ZERO_COST: FeatureStatus["cost"] = { buildUsd: 0, reviewUsd: 0, amendUsd: 0, window: { start: 0, end: 100 } };
@@ -110,5 +110,33 @@ describe("renderFleet (compact card layout)", () => {
     for (const line of renderFleet([f]).split("\n")) {
       expect(line.length).toBeLessThanOrEqual(WIDTH);
     }
+  });
+});
+
+describe("driver liveness in the fleet render (AGENT-44)", () => {
+  const fresh = { driver: "daemon", pid: 1, ageMs: 4_000, stale: false };
+  const dead = { driver: "session-loop", pid: 2, ageMs: 240_000, stale: true };
+
+  it("renderDrivers shows age per expected driver, ⚠ on stale, — when never seen", () => {
+    expect(renderDrivers([fresh, dead])).toBe("drv daemon 4s · session-loop ⚠4m");
+    expect(renderDrivers([fresh])).toBe("drv daemon 4s · session-loop —");
+    expect(renderDrivers([])).toBe("drv daemon — · session-loop —");
+  });
+
+  it("a stale driver puts a DRIVER DOWN banner above the cards", () => {
+    const out = renderFleet([feature({ sessions: [session()] })], undefined, new Map(), [fresh, dead]);
+    expect(out).toContain("session-loop ⚠4m");
+    expect(out).toContain("DRIVER DOWN?");
+  });
+
+  it("healthy drivers render the drv line without the banner", () => {
+    const out = renderFleet([feature({ sessions: [session()] })], undefined, new Map(), [fresh]);
+    expect(out).toContain("drv daemon 4s");
+    expect(out).not.toContain("DRIVER DOWN?");
+  });
+
+  it("no heartbeat rows at all (pre-first-launch) renders no drv line", () => {
+    const out = renderFleet([feature({ sessions: [session()] })]);
+    expect(out).not.toContain("drv ");
   });
 });

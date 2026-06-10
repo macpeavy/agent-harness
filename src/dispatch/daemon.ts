@@ -17,7 +17,9 @@ import { runMergeLeg, type MergeResult, type MergeTarget } from "./legs/merge";
 import { loadConfig, type SubstrateConfig } from "../config";
 import { AgentBlockedError, AgentTimeoutError } from "../opencode/client";
 import { DispatchRepository, type Dispatch } from "../substrate/dispatch";
+import { RuntimeRepository } from "../substrate/runtime";
 import { escalateOrFail } from "./escalation";
+import { Heartbeat } from "./heartbeat";
 
 /** The legs the daemon drives — injected so the orchestration is testable with fakes. */
 export interface DispatchLegs {
@@ -313,5 +315,7 @@ if (import.meta.main) {
   // migrate: false — `make up` co-launches this with the session-loop, so migration runs once
   // up front (`make migrate`); migrating here too would race the other process (ADR 0016).
   const daemon = new DispatchDaemon(new DispatchRepository(undefined, { migrate: false }), config);
+  // Liveness signal (AGENT-44): timer-based so a long build leg doesn't read as a dead driver.
+  new Heartbeat(new RuntimeRepository(undefined, { migrate: false }), "daemon").start();
   await daemon.run();
 }

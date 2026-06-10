@@ -6,10 +6,10 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { chiefRegistrations, type ChiefRegistration } from "./schema";
+import { chiefRegistrations, driverHeartbeats, type ChiefRegistration, type DriverHeartbeat } from "./schema";
 
 /** Register the live chief — its OpenCode session id and the server it lives on. */
 export interface RegisterChief {
@@ -78,6 +78,28 @@ export class RuntimeRepository {
       .delete(chiefRegistrations)
       .where(and(eq(chiefRegistrations.id, CHIEF_ROW_ID), eq(chiefRegistrations.sessionId, sessionId)))
       .run();
+  }
+
+  /**
+   * Record one heartbeat for a driver (AGENT-44) — upsert refreshing lastSeen. The caller
+   * passes its own process-start time (stable across its beats), so the row's startedAt
+   * always reflects the CURRENT process: a restart overwrites it along with the pid.
+   */
+  beat(driver: string, pid: number, intervalMs: number, startedAt: number): void {
+    const now = Date.now();
+    this.db
+      .insert(driverHeartbeats)
+      .values({ driver, pid, intervalMs, lastSeen: now, startedAt })
+      .onConflictDoUpdate({
+        target: driverHeartbeats.driver,
+        set: { pid, intervalMs, lastSeen: now, startedAt },
+      })
+      .run();
+  }
+
+  /** Every driver's last heartbeat, stable order — what `status`/fleet-status assess. */
+  listHeartbeats(): DriverHeartbeat[] {
+    return this.db.select().from(driverHeartbeats).orderBy(asc(driverHeartbeats.driver)).all();
   }
 
   /** Close the underlying db handle. */
