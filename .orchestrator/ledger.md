@@ -73,3 +73,27 @@ Brought the chief to life across four PRs (ADR 0019), each owner-merged. **#72 d
 Shipped the terminal reaper (#77, merged) — the agreed cleanup-floor follow-up to the escalation slice. Global idempotent sweep (src/dispatch/reaper.ts, injected deps): done→reap build/review sessions (cost already captured), failed/orphaned-superseded-attempt→reap the abandoned remote branch (keep session for debug), live→skip. OpencodeClient.deleteSession (DELETE /session/:id, 404-swallow), dispatches.reapedAt column (additive migration 0004) + markReaped (skip already-swept), PlanRepository.listAllChunks (the current-attempt set — orphan detection needs the global view since the plan overwrites chunk.dispatchId on re-dispatch). reap CLI spins an ephemeral serve for the session deletes. Owner set the policy (keep failed sessions, reap branches). 172 tests. Self-inflicted: a backtick in the commit -m shell-substituted and ran `bun run reap` against the real db (reaped 0, no harm); fixed message, banked the lesson to project memory. Wrote the chief handoff at .orchestrator/handoff-2026-06-08-chief.md.
 
 **P2 chief-analogue is complete and merged** (decompose #72, chief wired #73, conversational approval #75, escalation re-dispatch #76, reaper #77). The substrate is ready for the real-feature measurement run (the chief's own decomposition cost — the unmeasured thesis number, ADR 0019's first measurement target), which needs the gateway up + the chief/builder-strong routes pinged live (neither verified against a running gateway this session). Next session is chief's: pick the feature, run it. Broader chief abilities deferred to AGENT-27 (#58–64); incumbent chief keeps agent-harness strategy until then.
+
+## 2026-06-10 — dev-companion: notification subsystem (AGENT-37 + 45 + 44)
+
+Built the notification triad as a stacked PR chain: #145 (ADR 0024 — runtime context with
+chief_registrations, sessions.signaled_at exactly-once key, notify pass in the session loop,
+Notifier seam, chief launcher rewrite to serve+register+attach on AH_CHIEF_PORT), #146
+(AGENT-45 — merged-PR probe at AH_PR_POLL_MS cadence, auto-close review→done, done-leg chief
+push; manual close_session suppresses), #147 (AGENT-44 — timer-based driver heartbeats in the
+runtime context, surfaced in fleet-status drv line + banner and the status tool's NEEDS
+ATTENTION). Migrations 0010–0012, all additive, verified against a copy of the live db;
+backfill stamps pre-existing signalling-state sessions. Design choices of note: signaled_at
+clears on EVERY transition (superset of ADR 0024's rule — noted in PR as ADR refinement, not
+edited into the ADR); chief addressing resolved launcher-side (deterministic) rather than MCP
+self-call; staleness judged against each heartbeat row's own recorded cadence. Owner merges
+the stack in order; fleet needs make down/up after.
+
+Follow-up same session: PR #148 — the CI leg + amend_chunk. The owner asked whether the stack
+detects CI failures; it didn't, and detection alone would have stranded the chief (no verb to
+act — address_review is PR-comment-bound, the plan is frozen). Built both: statusCheckRollup
+on the existing in-review probe (recorded per head SHA on the session, signaled once per head
+via ci_signaled_sha, re-push re-arms) and amend_chunk (MCP tool + service method exposing the
+pendingFindings reopen channel for chief-diagnosed defects). Migration 0013 (three nullable
+columns). Persona updated (amend_chunk + close_session-is-usually-automatic). Note: gh GraphQL
+gave 401s this session while REST worked — PR #148 and its review went via REST.
