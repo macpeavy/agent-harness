@@ -11,7 +11,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { and, asc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import {
@@ -353,15 +353,42 @@ export class PlanRepository {
     return this.db.select().from(sessions).orderBy(asc(sessions.createdAt)).all();
   }
 
-  /** Move a session to a new state, validated against the session graph (transactional). */
+  /**
+   * Move a session to a new state, validated against the session graph (transactional).
+   * Every transition clears `signaledAt` (ADR 0024): entering a signalling state re-arms
+   * the notify pass (a re-park re-signals), and leaving one retires the stale stamp.
+   */
   transitionSession(id: string, to: SessionState): void {
     this.db.transaction((tx) => {
       const row = tx.select({ state: sessions.state }).from(sessions).where(eq(sessions.id, id)).get();
       if (!row) throw new Error(`no session ${id}`);
       if (!SESSION_TRANSITIONS[row.state].includes(to))
         throw new Error(`illegal session transition ${row.state} → ${to} for ${id}`);
-      tx.update(sessions).set({ state: to, updatedAt: Date.now() }).where(eq(sessions.id, id)).run();
+      tx.update(sessions).set({ state: to, signaledAt: null, updatedAt: Date.now() }).where(eq(sessions.id, id)).run();
     });
+  }
+
+  /**
+   * Stamp a session's signal as fired (ADR 0024) — the notify pass calls this after a
+   * successful chief wake / owner notify, making the signal exactly-once per transition
+   * (the pass selects on `signaledAt IS NULL`; transitions clear the stamp).
+   */
+  stampSignaled(id: string, at: number = Date.now()): void {
+    const row = this.db.select({ id: sessions.id }).from(sessions).where(eq(sessions.id, id)).get();
+    if (!row) throw new Error(`no session ${id}`);
+    this.db.update(sessions).set({ signaledAt: at, updatedAt: Date.now() }).where(eq(sessions.id, id)).run();
+  }
+
+  /** The sessions sitting un-signaled in one of the given signalling states (ADR 0024) —
+   *  what the notify pass sweeps each tick. Oldest first, for stable signal order. */
+  listUnsignaledSessions(states: SessionState[]): Session[] {
+    if (states.length === 0) return [];
+    return this.db
+      .select()
+      .from(sessions)
+      .where(and(inArray(sessions.state, states), isNull(sessions.signaledAt)))
+      .orderBy(asc(sessions.createdAt))
+      .all();
   }
 
   /** Link a session to its session-main branch + PR (slice 2 populates these). */
