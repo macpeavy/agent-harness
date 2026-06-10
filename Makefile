@@ -83,9 +83,9 @@ daemon:
 session-loop:
 	bash -c '$(LOADENV) exec bun run session-loop'
 
-# The chief launcher (ADR 0024): a persistent `opencode serve` on AH_CHIEF_PORT (default
-# 4096), the chief session created over REST and registered in the substrate db (so the
-# session loop's notify pass can wake it), then the TUI attached to that exact session.
+# The chief launcher (ADR 0024): mint the chief session over REST, register it in the
+# substrate db (so the session loop's notify pass can wake it), then run the TUI as the
+# server on AH_CHIEF_PORT (default 4096) with the chief persona selected.
 chief:
 	bash -c '$(LOADENV) exec bun run src/cli/chief.ts'
 
