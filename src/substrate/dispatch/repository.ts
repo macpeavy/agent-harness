@@ -96,14 +96,16 @@ export class DispatchRepository {
     if (dir && dir !== ".") mkdirSync(dir, { recursive: true });
 
     this.sqlite = new Database(dbPath);
-    this.sqlite.run("PRAGMA journal_mode = WAL");
     // Wait, don't throw, on a write-lock contention. `make up` co-launches multiple writer
     // processes (daemon + session-loop + the chief's MCP server) against this one file; WAL gives
     // concurrent reads but writers still serialize, and WITHOUT this a writer that loses the race
     // gets SQLITE_BUSY ("database is locked") immediately and the process exits 1 (the daemon
     // crash, ADR 0016). The timeout makes it retry for up to 5s — the transactions are tiny, so a
-    // collision clears in milliseconds.
+    // collision clears in milliseconds. Set FIRST: busy_timeout is connection-local and takes no
+    // lock, while the WAL pragma is a lock-taking statement — running WAL before arming the
+    // timeout throws SQLITE_BUSY_RECOVERY when another co-launching connection holds the file.
     this.sqlite.run("PRAGMA busy_timeout = 5000");
+    this.sqlite.run("PRAGMA journal_mode = WAL");
     this.db = drizzle(this.sqlite);
     if (opts.migrate !== false) migrate(this.db, { migrationsFolder: MIGRATIONS_DIR });
   }
