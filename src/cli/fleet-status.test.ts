@@ -70,7 +70,8 @@ describe("renderFleet (compact card layout)", () => {
     f.sessions[0]!.readout.reachedReady = 1;
     const out = renderFleet([f], undefined, new Map([["feat-1", 0]]));
     expect(out).toContain("● fleet-status-budget-v2");
-    expect(out).toContain("review · PR #133 · ~80L");
+    // Owner language (AGENT-52): `review` reads as awaiting the OWNER, not the reviewer.
+    expect(out).toContain("awaiting your review · PR #133");
     expect(out).toContain("✓1 ✗0 ⚠0 · $0.53");
   });
 

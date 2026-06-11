@@ -21,6 +21,7 @@ import { RuntimeRepository } from "../substrate/runtime";
 import { PlanDispatchService } from "./plan-dispatch";
 import { Heartbeat } from "./heartbeat";
 import { NotifyPass } from "./notify";
+import { ownerNotifier } from "./owner-notify";
 import { runPrProbeLeg, type PrProbe } from "./legs/pr-merged";
 import { runSessionOpenLeg, type SessionOpenResult } from "./legs/session-open";
 import { ledgerPath, readSpendLedger, spendInWindow } from "./litellm-spend";
@@ -236,7 +237,10 @@ if (import.meta.main) {
   const dispatch = new DispatchRepository(undefined, { migrate: false });
   const runtime = new RuntimeRepository(undefined, { migrate: false });
   const service = new PlanDispatchService(plan, dispatch);
-  const notify = new NotifyPass(plan, service, runtime);
+  // The owner channel (AGENT-52): console floor + tmux when running inside the `make up`
+  // session + ntfy when a topic is configured. Composition-root assembly per ADR 0024.
+  const notifier = ownerNotifier(config, { inTmux: Boolean(process.env.TMUX) });
+  const notify = new NotifyPass(plan, service, runtime, notifier);
   new Heartbeat(runtime, "session-loop").start(); // liveness signal (AGENT-44)
   await new SessionLoop(plan, service, config, undefined, undefined, notify).run();
 }

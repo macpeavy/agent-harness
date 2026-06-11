@@ -23,6 +23,8 @@ const CONFIG: SubstrateConfig = {
   agentTimeoutMs: 1_800_000,
   prPollMs: 60_000,
   botLogin: null,
+  ntfyTopic: null,
+  ntfyServer: "https://ntfy.sh",
 };
 
 const ISSUE: Issue = { id: "ISSUE-1", title: "Add a thing", body: "Do the thing." };

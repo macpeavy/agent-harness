@@ -11,6 +11,7 @@ import { PlanDispatchService } from "../dispatch/plan-dispatch";
 import type { FeatureStatus } from "../dispatch/plan-dispatch";
 import { assessHeartbeats, formatAge, type DriverHealth } from "../dispatch/heartbeat";
 import { ledgerPath, readSpendLedger, spendInWindow } from "../dispatch/litellm-spend";
+import { sessionStateLabel } from "./session-state-label";
 
 /** The chief's reconciled spend per feature id, or null when it can't be measured (the spend
  *  ledger is empty/absent — no gateway callback has run). Keyed by feature id so the pure
@@ -93,10 +94,11 @@ export function renderFleet(
       lines.push(`  raise / ship / abandon`);
     }
 
-    // Lead session: the one with a PR (the reviewable unit), else the first. Its state is the most
-    // informative (e.g. `review` = awaiting the owner) — falls back to the feature state.
+    // Lead session: the one with a PR (the reviewable unit), else the first. Its state is the
+    // most informative, rendered in owner language (AGENT-52: `review` means "awaiting YOUR
+    // review", not "the reviewer is reviewing") — falls back to the feature state.
     const lead = f.sessions.find((s) => s.session.prNumber != null) ?? f.sessions[0];
-    let stateLine = `  ${lead?.session.state ?? f.feature.state}`;
+    let stateLine = `  ${lead ? sessionStateLabel(lead.session.state) : f.feature.state}`;
     if (lead?.session.prNumber != null) stateLine += ` · PR #${lead.session.prNumber}`;
     if (lead?.session.locEstimate != null) stateLine += ` · ~${lead.session.locEstimate}L`;
     lines.push(trunc(stateLine, WIDTH));

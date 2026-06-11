@@ -20,6 +20,8 @@ const CONFIG = {
   agentTimeoutMs: 1_800_000,
   prPollMs: 0, // every tick is "due" — tests drive the cadence explicitly where it matters
   botLogin: "the-bot",
+  ntfyTopic: null,
+  ntfyServer: "https://ntfy.sh",
 } satisfies SubstrateConfig;
 
 let dir: string;

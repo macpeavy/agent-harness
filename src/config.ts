@@ -41,6 +41,10 @@ export interface SubstrateConfig {
    *  filter out so the bot's own comments never route as owner feedback. Null = derive it
    *  once from `gh api user` (see legs/gh-identity.ts). */
   botLogin: string | null;
+  /** ntfy topic for the owner review-ready push (AGENT-52) — set = the channel is on. */
+  ntfyTopic: string | null;
+  /** ntfy server base URL (AGENT-52). Default https://ntfy.sh. */
+  ntfyServer: string;
 }
 
 // A positive integer from env, or the fallback (a malformed value doesn't silently
@@ -88,5 +92,7 @@ export async function loadConfig(): Promise<SubstrateConfig> {
     agentTimeoutMs: intFromEnv(process.env.AH_AGENT_TIMEOUT_MS, 1_800_000),
     prPollMs: intFromEnv(process.env.AH_PR_POLL_MS, 60_000),
     botLogin: process.env.AH_BOT_LOGIN ?? null,
+    ntfyTopic: process.env.AH_NTFY_TOPIC || null,
+    ntfyServer: process.env.AH_NTFY_SERVER || "https://ntfy.sh",
   };
 }
