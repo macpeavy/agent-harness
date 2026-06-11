@@ -6,11 +6,11 @@ This file orients any agent (or human) building in this repo. Read it before wri
 
 An open re-platform of a multi-agent orchestrator onto OpenCode + LiteLLM. The agent design is the asset; the harness is a commodity we consume. We **do not reimplement the harness** — the agent loop, tool execution, model calls, and session management are OpenCode's job. We build the orchestration design, the per-persona routing, and the substrate around it. A persona is a *configuration* of OpenCode (agent definition + model route + permission set), not a program.
 
-## Current phase: the spike
+## Current phase: hardening + measurement
 
-We are proving a thesis, not shipping the full system. Scope is deliberately one vertical slice: a cheap model drives a builder to a mergeable PR while a strong model reviews, driven by a thin substrate over OpenCode's HTTP API, with a token-free wake. Backlog: the `agent-harness` Linear team, `spike` label (AGENT-1…AGENT-9), mirrored to GitHub issues.
+The system is live: Drizzle-backed dispatch registry, dispatch-loop daemon, amend cycle, and session-main as the build surface, with budget guard (ADR 0026). The live phase focuses on hardening and P4 measurement: amend rate, cost-per-feature, and reliability. Backlog: the `agent-harness` Linear team, `port` track, mirrored to GitHub issues.
 
-**The spike code is the seed of the production substrate — not a throwaway POC.** Structure it to be built upon: real modules, clear seams, typed boundaries. No disposable scripts.
+Model seats: builder = Claude Haiku 4.5 (cheap route, gated by `make gate-builder` acceptance gate — ADR 0025), reviewer = claude-sonnet-4.6 (pinned), chief = claude-sonnet-4.6 (Sonnet now; Opus principal A/B is a planned route).
 
 ## Hard conventions
 
