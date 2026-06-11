@@ -55,6 +55,19 @@ export interface CiFailureNotice {
   chunks: { chunkId: string; surface: string }[];
 }
 
+/** What the chief needs to act on an owner response (AGENT-54) — the owner left a
+ *  changes-requested review or new comments on an in-review session's PR; the chief routes
+ *  them with address_review. */
+export interface OwnerResponseNotice {
+  sessionId: string;
+  featureId: string;
+  featureTitle: string;
+  prNumber: number | null;
+  prUrl: string | null;
+  /** The response wave's timestamp (epoch ms) — the exactly-once key the pass stamps. */
+  respondedAt: number;
+}
+
 /** What the chief needs to update its picture when a session's PR merged on GitHub and the
  *  substrate closed it (AGENT-45) — no routing, just the new state of the world. */
 export interface SessionDoneNotice {
@@ -109,6 +122,20 @@ export function chiefCiFailurePrompt(notice: CiFailureNotice): string {
     `the fix with amend_chunk(chunkId, findings) — the builder amends, the reviewer re-reviews, ` +
     `the fix lands in session-main and the checks re-run. If the failure needs work no existing ` +
     `chunk owns, surface it to the owner instead.`
+  );
+}
+
+/** Render the chief's owner-response wake (AGENT-54): the owner reviewed/commented on an
+ *  in-review session's PR — read and route it with address_review, don't wait to be asked. */
+export function chiefOwnerResponsePrompt(notice: OwnerResponseNotice): string {
+  const pr = notice.prUrl ?? (notice.prNumber !== null ? `PR #${notice.prNumber}` : "its PR");
+  return (
+    `[substrate notify] The owner responded on ${pr} (session ${notice.sessionId} of feature ` +
+    `"${notice.featureTitle}", in review): a changes-requested review and/or new comments.\n\n` +
+    `${JSON.stringify(notice, null, 2)}\n\n` +
+    `Call address_review("${notice.sessionId}") to read the review off the PR and route it ` +
+    `into the amend cycle — inline comments reopen their chunk; general/unroutable notes come ` +
+    `back for your judgment. Report tool errors verbatim if it fails; do not guess.`
   );
 }
 
@@ -181,6 +208,17 @@ export class NotifyPass {
         fired++;
       }
     }
+    // The owner-response leg (AGENT-54) — keyed by the response wave's timestamp, same shape
+    // as the CI leg (the session stays in `review` while the owner reviews, so signaled_at
+    // can't carry this; owner_response_signaled_at does, and a NEWER response re-arms it).
+    for (const session of this.plan.listUnsignaledOwnerResponses()) {
+      const signaledAt = await this.pushChiefOwnerResponse(session);
+      if (signaledAt !== null) {
+        this.plan.stampOwnerResponseSignaled(session.id, signaledAt);
+        this.loggedMisses.delete(session.id);
+        fired++;
+      }
+    }
     return fired;
   }
 
@@ -223,6 +261,40 @@ export class NotifyPass {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logMissOnce(session.id, `chief CI-failure wake failed for session ${session.id} (stale registration?): ${message}`);
+      return null;
+    }
+  }
+
+  // Wake the chief with an owner response on an in-review session's PR (AGENT-54). Returns
+  // the wave timestamp that was signaled (to stamp), or null on no-chief / failed push —
+  // left pending, retried next tick, picked up by a later chief launch.
+  private async pushChiefOwnerResponse(session: Session): Promise<number | null> {
+    if (session.ownerResponseAt === null) return null; // raced a clear between select and push
+    const chief = this.chiefs.getChief();
+    if (!chief) {
+      this.logMissOnce(session.id, `no chief registered — owner response on session ${session.id} waits (address_review still works manually)`);
+      return null;
+    }
+    const feature = this.plan.getFeature(session.featureId);
+    if (!feature) return null;
+    const notice: OwnerResponseNotice = {
+      sessionId: session.id,
+      featureId: feature.id,
+      featureTitle: feature.title,
+      prNumber: session.prNumber,
+      prUrl: session.prUrl,
+      respondedAt: session.ownerResponseAt,
+    };
+    try {
+      await this.wake({ baseUrl: chief.baseUrl, sessionId: chief.sessionId }, chiefOwnerResponsePrompt(notice));
+      // Ambient owner awareness, same as the other pushes: one console line.
+      console.warn(
+        `session ${session.id}: owner responded on PR #${session.prNumber ?? "?"} — woke the chief to address the review`,
+      );
+      return session.ownerResponseAt;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logMissOnce(session.id, `chief owner-response wake failed for session ${session.id} (stale registration?): ${message}`);
       return null;
     }
   }

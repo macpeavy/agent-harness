@@ -435,6 +435,45 @@ export class PlanRepository {
       .all();
   }
 
+  /**
+   * Record the latest owner review activity the in-review probe saw on a session's PR
+   * (AGENT-54), in epoch ms. Monotonic: an older or equal timestamp is a no-op, so a probe
+   * re-reading the same wave doesn't churn the row.
+   */
+  setOwnerResponse(id: string, atMs: number): void {
+    const row = this.db.select({ at: sessions.ownerResponseAt }).from(sessions).where(eq(sessions.id, id)).get();
+    if (!row) throw new Error(`no session ${id}`);
+    if (row.at !== null && row.at >= atMs) return;
+    this.db.update(sessions).set({ ownerResponseAt: atMs, updatedAt: Date.now() }).where(eq(sessions.id, id)).run();
+  }
+
+  /** Stamp a session's owner-response wave as signaled (AGENT-54) — the exactly-once key.
+   *  A NEWER response un-matches the stamp and re-arms the signal. */
+  stampOwnerResponseSignaled(id: string, atMs: number): void {
+    const row = this.db.select({ id: sessions.id }).from(sessions).where(eq(sessions.id, id)).get();
+    if (!row) throw new Error(`no session ${id}`);
+    this.db.update(sessions).set({ ownerResponseSignaledAt: atMs, updatedAt: Date.now() }).where(eq(sessions.id, id)).run();
+  }
+
+  /** The sessions with an owner response that hasn't been signaled for its timestamp —
+   *  the notify pass's owner-response sweep (AGENT-54). Oldest first. */
+  listUnsignaledOwnerResponses(): Session[] {
+    return this.db
+      .select()
+      .from(sessions)
+      .where(
+        and(
+          isNotNull(sessions.ownerResponseAt),
+          or(
+            isNull(sessions.ownerResponseSignaledAt),
+            ne(sessions.ownerResponseSignaledAt, sessions.ownerResponseAt),
+          ),
+        ),
+      )
+      .orderBy(asc(sessions.createdAt))
+      .all();
+  }
+
   /** Link a session to its session-main branch + PR (slice 2 populates these). */
   linkSessionPr(id: string, links: SessionLinks): void {
     const values: Partial<NewSession> = {};

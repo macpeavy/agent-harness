@@ -3,6 +3,7 @@
 // The output is ≤100 chars/line, no ANSI color.
 
 import type { FeatureHistory } from "./history-assemble";
+import { sessionStateLabel } from "./session-state-label";
 
 function trunc(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
@@ -34,7 +35,9 @@ export function renderHistory(history: FeatureHistory): string {
   lines.push(rollupLine.length > 100 ? rollupLine.slice(0, 99) : rollupLine);
 
   for (const session of history.sessions) {
-    let sessionLine = `  session ${session.session.id} [${session.session.state}]`;
+    // Session states render in owner language (AGENT-52): `review` = awaiting the owner.
+    const stateLabel = sessionStateLabel(session.session.state);
+    let sessionLine = `  session ${session.session.id} [${stateLabel}]`;
     if (session.session.prNumber != null) {
       sessionLine += `  PR #${session.session.prNumber}`;
     }
@@ -43,7 +46,7 @@ export function renderHistory(history: FeatureHistory): string {
     }
     if (sessionLine.length > 100) {
       const sessId = trunc(session.session.id, 30);
-      sessionLine = `  session ${sessId} [${session.session.state}]`;
+      sessionLine = `  session ${sessId} [${stateLabel}]`;
       if (session.session.prNumber != null) {
         sessionLine += `  PR #${session.session.prNumber}`;
       }

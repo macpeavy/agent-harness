@@ -30,6 +30,8 @@ function makeSession(id: string, featureId: string, state: string = "done"): Ses
     ciFailedSha: null,
     ciFailedChecks: null,
     ciSignaledSha: null,
+    ownerResponseAt: null,
+    ownerResponseSignaledAt: null,
     createdAt: 1000,
     updatedAt: 1000,
   };
@@ -233,7 +235,7 @@ describe("renderHistory", () => {
       chiefCostNote: "dispatch-legs only",
     };
     const output = renderHistory(history);
-    expect(output).toContain("session session-1 [review]");
+    expect(output).toContain("session session-1 [awaiting your review]"); // owner language (AGENT-52)
     expect(output).toContain("PR #42");
     expect(output).toContain("~800 LOC");
   });

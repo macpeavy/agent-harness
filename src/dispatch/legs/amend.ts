@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { runAgent } from "../../opencode/agent-runner";
 import { removeWorktree } from "./worktree";
 import type { SubstrateConfig } from "../../config";
+import type { BuildTier } from "../../substrate/dispatch";
 import type { ReviewTarget } from "./review";
 
 export interface AmendResult {
@@ -21,10 +22,13 @@ export interface AmendResult {
   tokens: { input: number; output: number };
 }
 
+/** One amend round on the dispatch's build tier — a 'strong' tier (hinted or promoted)
+ *  amends on the strong builder, mirroring the build leg's tier→agent pick. */
 export async function runAmendLeg(
   target: ReviewTarget,
   findings: string,
   config: SubstrateConfig,
+  tier?: BuildTier,
 ): Promise<AmendResult> {
   mkdirSync(config.worktreeRoot, { recursive: true });
   const worktree = join(config.worktreeRoot, `amend-${target.branch.replace(/[^a-zA-Z0-9]+/g, "-")}`);
@@ -40,13 +44,14 @@ export async function runAmendLeg(
   await $`bun install`.cwd(worktree).quiet();
 
   try {
+    const agent = tier === "strong" ? config.builderStrongAgent : config.builderAgent;
     const prompt =
       `A reviewer raised blocking findings on your change. Address them by editing files in ` +
       `the current working directory, then typecheck/test. Do NOT run git — the substrate ` +
       `handles version control.\n\nReview findings:\n\n${findings}`;
     const run = await runAgent(worktree, {
       title: `amend ${target.branch}`,
-      agent: config.builderAgent,
+      agent,
       prompt,
       // Idle-polling drive (AGENT-38) — see build leg: idle window catches a hang, absolute backstop the runaway.
       mode: "wake",
@@ -57,7 +62,7 @@ export async function runAmendLeg(
     // Did the amend change anything?
     const status = (await $`git -C ${worktree} status --porcelain`.text()).trim();
     if (!status) {
-      return { changed: false, reply: run.reply, route: config.builderAgent, tokens: run.tokens };
+      return { changed: false, reply: run.reply, route: agent, tokens: run.tokens };
     }
 
     // Push the fix onto the same chunk branch — it re-reviews, then merges into session-main.
@@ -66,7 +71,7 @@ export async function runAmendLeg(
     await $`git -C ${worktree} commit -q -m ${commitMsg}`;
     await $`git -C ${worktree} push origin ${target.branch}`.quiet();
 
-    return { changed: true, reply: run.reply, route: config.builderAgent, tokens: run.tokens };
+    return { changed: true, reply: run.reply, route: agent, tokens: run.tokens };
   } finally {
     await removeWorktree(config.repoPath, worktree);
   }

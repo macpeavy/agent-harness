@@ -43,12 +43,22 @@ import {
 
 // The chunk spec the chief authors per chunk (ADR 0014). The parent sessionId is omitted —
 // the handler stamps it from the session, so the chief doesn't repeat it per chunk.
+// The acceptance wording is load-bearing (AGENT-53): the old "including a test file" licensed
+// a chief to spec a committed checklist file as the acceptance artifact of a docs-only chunk
+// (PR #151's docs/tests/ dropping). Acceptance lives HERE, in the record — never as a path
+// the builder commits.
+const ACCEPTANCE_DESC =
+  "acceptance criteria, recorded HERE in the chunk record — for code, name the runtime test " +
+  "file that must pass; for docs-only work, state the checks as criteria in this field. NEVER " +
+  "instruct the builder to commit a checklist/notes file to the repo: acceptance lives in the " +
+  "registry, not the repo tree";
+
 const chunkSpec = z.object({
   id: z.string().describe("unique chunk id (becomes the dispatch/branch id)"),
   surface: z.string().describe("the one file this chunk produces"),
   intent: z.string().describe("one sentence: what this chunk is for"),
   contract: z.string().describe("the exact signatures/types/exports it must produce"),
-  acceptance: z.string().describe("acceptance criteria, including a test file"),
+  acceptance: z.string().describe(ACCEPTANCE_DESC),
   dataShapes: z.string().optional().describe("data shapes the chunk works with"),
   preResolved: z.string().optional().describe("design decisions pre-resolved to avoid amends"),
   outOfScope: z.string().optional().describe("what this chunk must NOT do"),
@@ -231,7 +241,7 @@ export function createSubstrateServer(service: PlanDispatchService, opts: Substr
         surface: z.string().optional().describe("the one file this chunk produces"),
         intent: z.string().optional().describe("one sentence: what this chunk is for"),
         contract: z.string().optional().describe("the exact signatures/types/exports it must produce"),
-        acceptance: z.string().optional().describe("acceptance criteria, including a test file"),
+        acceptance: z.string().optional().describe(ACCEPTANCE_DESC),
         dataShapes: z.string().optional().describe("data shapes the chunk works with"),
         preResolved: z.string().optional().describe("design decisions pre-resolved to avoid amends"),
         outOfScope: z.string().optional().describe("what this chunk must NOT do"),

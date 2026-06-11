@@ -30,6 +30,8 @@ function makeSession(id: string, featureId: string): Session {
     ciFailedSha: null,
     ciFailedChecks: null,
     ciSignaledSha: null,
+    ownerResponseAt: null,
+    ownerResponseSignaledAt: null,
     createdAt: 1000,
     updatedAt: 1000,
   };

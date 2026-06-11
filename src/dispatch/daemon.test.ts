@@ -22,6 +22,9 @@ const CONFIG: SubstrateConfig = {
   agentIdleMs: 120_000,
   agentTimeoutMs: 1_800_000,
   prPollMs: 60_000,
+  botLogin: null,
+  ntfyTopic: null,
+  ntfyServer: "https://ntfy.sh",
 };
 
 const ISSUE: Issue = { id: "ISSUE-1", title: "Add a thing", body: "Do the thing." };
@@ -60,7 +63,7 @@ function enqueue(id: string, issue: Issue = ISSUE): void {
 interface Recorder {
   build: Issue[];
   review: ReviewTarget[];
-  amend: { target: ReviewTarget; findings: string }[];
+  amend: { target: ReviewTarget; findings: string; tier?: string }[];
   merge: MergeTarget[];
 }
 
@@ -107,19 +110,19 @@ function fakeLegs(
       };
       return result;
     },
-    async amend(target, findings) {
-      rec.amend.push({ target, findings });
+    async amend(target, findings, _config, tier) {
+      rec.amend.push({ target, findings, tier });
       const result: AmendResult = {
         changed: opts.amendChanges ?? true,
         reply: "amended",
-        route: "builder",
+        route: tier === "strong" ? "builder-strong" : "builder",
         tokens: { input: 300, output: 150 },
       };
       return result;
     },
     async merge(target) {
       rec.merge.push(target);
-      const result: MergeResult = { merged: true };
+      const result: MergeResult = { merged: true, flagged: [] };
       return result;
     },
   };
@@ -503,7 +506,7 @@ describe("owner-review reopen", () => {
     expect(rec.merge).toHaveLength(1); // fix re-merged into session-main
   });
 
-  it("escalates 'attended' when the builder can't action the owner's note", async () => {
+  it("escalates 'attended' when the builder can't action the owner's note — reason recorded, findings kept", async () => {
     seedDone("d1");
     repo.reopenForReview("d1", "please rethink the whole approach");
     const { legs, rec } = fakeLegs({ amendChanges: false });
@@ -513,8 +516,33 @@ describe("owner-review reopen", () => {
     const d = repo.get("d1");
     expect(d?.state).toBe("escalated");
     expect(d?.escalated).toBe("attended"); // owner asked; cheap builder couldn't — needs the chief/owner
-    expect(d?.pendingFindings).toBeNull();
+    expect(d?.escalationReason).toContain("owner's review note"); // never a null reason (ADR 0027)
+    expect(d?.pendingFindings).toBe("please rethink the whole approach"); // kept for the amend-resume promote
     expect(rec.review).toHaveLength(0); // nothing changed — no wasted re-review
     expect(rec.merge).toHaveLength(0);
+  });
+
+  // ADR 0027: the chief's promote on an amend-round escalation resumes the SAME dispatch as a
+  // strong-tier amend (escalated → amending, tier strong, findings kept) — the daemon then
+  // drives it through the owner-amend path on the strong builder.
+  it("drives a promoted amend-resume on the strong tier and lands it (the AGENT-55 chain)", async () => {
+    seedDone("d1");
+    repo.reopenForReview("d1", "remove the droppings file");
+    const { legs: failing } = fakeLegs({ amendChanges: false });
+    await new DispatchDaemon(repo, CONFIG, failing, fakeReconcile).runOnce(); // cheap amend fails → parked
+
+    repo.resumeAmend("d1", "strong"); // what service.promote does on an amend escalation
+    const { legs, rec } = fakeLegs({ reviewVerdicts: ["clean"] });
+    const driven = await new DispatchDaemon(repo, CONFIG, legs, fakeReconcile).runOnce();
+
+    expect(driven).toBe(1);
+    const d = repo.get("d1");
+    expect(d?.state).toBe("done"); // the strong amend landed and re-merged
+    expect(d?.pendingFindings).toBeNull(); // consumed by the successful amend
+    expect(rec.amend).toHaveLength(1);
+    expect(rec.amend[0]?.findings).toBe("remove the droppings file"); // the ORIGINAL notes, not a rebuild
+    expect(rec.amend[0]?.tier).toBe("strong"); // the promoted tier reached the leg
+    expect(rec.build).toHaveLength(0); // never rebuilds the landed contract
+    expect(rec.merge).toHaveLength(1); // the fix re-merged into session-main
   });
 });

@@ -36,19 +36,25 @@ export interface Handling {
   message?: string;
 }
 
-/** The ADR 0023 taxonomy, in code — the single source of truth for failure handling. */
+/**
+ * The ADR 0023 taxonomy, in code — the single source of truth for failure handling.
+ * Every parked mode carries a message: the modes without a caller-supplied one get a
+ * default, so `escalation_reason` is never null and the chief routes on the recorded
+ * cause instead of guessing (the AGENT-55 blind-routing bug — `attended` with a null
+ * reason reads as anything the chief imagines).
+ */
 export function classifyFailure(mode: FailureMode): Handling {
   switch (mode.kind) {
     case "no-op":
-      return { terminal: false, reason: "no-op" }; // row 1 → park; redecompose / promote
+      return { terminal: false, reason: "no-op", message: "builder reported done but changed nothing (empty diff, after a re-prompt)" }; // row 1 → park; redecompose / promote
     case "error":
       return { terminal: false, reason: "error", message: mode.message }; // row 2 → park to attended
     case "timeout":
       return { terminal: false, reason: "attended", message: mode.message }; // row 3
     case "amend-cap":
-      return { terminal: false, reason: "re-decompose" }; // row 4
+      return { terminal: false, reason: "re-decompose", message: "review still found blockers at the amend cap (or an amend changed nothing)" }; // row 4
     case "owner-note":
-      return { terminal: false, reason: "attended" }; // row 5
+      return { terminal: false, reason: "attended", message: "builder could not action the owner's review note (the amend changed nothing)" }; // row 5
     case "blocked":
       return { terminal: false, reason: "attended", message: mode.message }; // headless permission → human
     case "substrate":

@@ -16,7 +16,7 @@ import { runAmendLeg, type AmendResult } from "./legs/amend";
 import { runMergeLeg, type MergeResult, type MergeTarget } from "./legs/merge";
 import { loadConfig, type SubstrateConfig } from "../config";
 import { AgentBlockedError, AgentTimeoutError } from "../opencode/client";
-import { DispatchRepository, type Dispatch } from "../substrate/dispatch";
+import { DispatchRepository, type BuildTier, type Dispatch } from "../substrate/dispatch";
 import { RuntimeRepository } from "../substrate/runtime";
 import { escalateOrFail } from "./escalation";
 import { Heartbeat } from "./heartbeat";
@@ -25,7 +25,7 @@ import { Heartbeat } from "./heartbeat";
 export interface DispatchLegs {
   build(issue: Issue, config: SubstrateConfig, opts?: { reprompt?: string }): Promise<BuildResult>;
   review(target: ReviewTarget, config: SubstrateConfig): Promise<ReviewResult>;
-  amend(target: ReviewTarget, findings: string, config: SubstrateConfig): Promise<AmendResult>;
+  amend(target: ReviewTarget, findings: string, config: SubstrateConfig, tier?: BuildTier): Promise<AmendResult>;
   merge(target: MergeTarget, config: SubstrateConfig): Promise<MergeResult>;
 }
 
@@ -233,11 +233,12 @@ export class DispatchDaemon {
     }
   }
 
-  // One amend round: re-run the builder against the findings, record the round + cost.
-  // Returns whether the amend actually changed anything.
+  // One amend round: re-run the builder against the findings on the dispatch's tier (a
+  // tier-promoted amend runs the strong builder), record the round + cost. Returns whether
+  // the amend actually changed anything.
   private async amend(id: string, target: ReviewTarget, findings: string): Promise<boolean> {
     const amendStart = Date.now();
-    const result = await this.legs.amend(target, findings, this.config);
+    const result = await this.legs.amend(target, findings, this.config, this.require(id).tier ?? undefined);
     this.repo.setRoute(id, result.route);
     this.repo.setCost(id, "amend", this.reconcileCost(result.route, amendStart, Date.now()));
     this.repo.incrementAmendRound(id);
@@ -250,7 +251,9 @@ export class DispatchDaemon {
   // carries just the fix delta), clear the findings, then hand to the normal review cycle:
   // a clean re-review squash-merges the fix into session-main and the PR updates. If the
   // builder can't action the owner's note, escalate `attended` — it needs the chief/owner,
-  // not another cheap round.
+  // not another cheap round. The findings are cleared only on a SUCCESSFUL amend: an
+  // escalated amend keeps them on the row, so the chief's promote can resume the amend on
+  // the strong tier against the same findings instead of rebuilding the contract (ADR 0027).
   private async ownerAmend(id: string, findings: string): Promise<void> {
     const dispatch = this.require(id);
     const target: ReviewTarget = {
@@ -258,11 +261,11 @@ export class DispatchDaemon {
       sessionBranch: dispatch.sessionBranch ?? undefined,
     };
     const amended = await this.amend(id, target, findings);
-    this.repo.clearPendingFindings(id);
     if (!amended) {
-      escalateOrFail(this.repo, id, { kind: "owner-note" }); // row 5 → park to attended
+      escalateOrFail(this.repo, id, { kind: "owner-note" }); // row 5 → park to attended, findings kept
       return;
     }
+    this.repo.clearPendingFindings(id);
     this.repo.transition(id, "review");
     await this.review(id);
   }
@@ -270,10 +273,16 @@ export class DispatchDaemon {
   // Squash-merge a cleanly-reviewed chunk into its session-main branch (ADR 0020). The
   // session-main branch rides the dispatch row, so the daemon stays plan-agnostic. A
   // dispatch with no sessionBranch (legacy build-off-main) has nothing to merge into.
+  // Droppings flags (AGENT-53) come back annotated on the PR; log them for the operator.
   private async merge(id: string, branch: string): Promise<void> {
     const dispatch = this.require(id);
     if (!dispatch.sessionBranch) return;
-    await this.legs.merge({ branch, sessionBranch: dispatch.sessionBranch, title: dispatch.title }, this.config);
+    const result = await this.legs.merge(
+      { branch, sessionBranch: dispatch.sessionBranch, title: dispatch.title, ids: [dispatch.id, dispatch.issueId] },
+      this.config,
+    );
+    for (const f of result.flagged)
+      console.warn(`dispatch ${id} landed a flagged file (${f.reason}): ${f.path} — annotated on the session PR`);
   }
 
   // A model turn timed out (ADR 0023 row 3): park it for the chief through the central surface —
