@@ -26,19 +26,26 @@ export interface SessionOpenResult {
   prUrl: string;
 }
 
+/** Runs a `gh` CLI command and returns its stdout. Injected for testing; defaults to the real `gh`. */
+export type GhFn = (args: string[], input?: string) => Promise<string>;
+
+async function realGhFn(args: string[], _input?: string): Promise<string> {
+  return (await $`gh ${args}`.quiet().text()).trim();
+}
+
 /** Create (or adopt) `session-main-<sessionId>` + its PR; returns the branch + PR linkage. */
 export async function runSessionOpenLeg(
   sessionId: string,
   title: string,
   config: SubstrateConfig,
+  ghFn: GhFn = realGhFn,
 ): Promise<SessionOpenResult> {
   const branch = `session-main-${sessionId}`;
 
   // 1. An open PR for this head already exists (a prior run got this far) → adopt it. This is
   //    the fully-recovered case: branch + PR are both already there, nothing to do but link.
-  const existing = (await $`gh pr list --repo ${config.ghRepo} --head ${branch} --state open --json number,url`
-    .quiet()
-    .json()) as { number: number; url: string }[];
+  const existingJson = await ghFn(["pr", "list", "--repo", config.ghRepo, "--head", branch, "--state", "open", "--json", "number,url"]);
+  const existing = JSON.parse(existingJson || "[]") as { number: number; url: string }[];
   if (existing.length > 0) {
     const pr = existing[0] as { number: number; url: string };
     return { branch, prNumber: pr.number, prUrl: pr.url };
@@ -67,9 +74,7 @@ export async function runSessionOpenLeg(
 
   // 3. The branch is on the remote now (freshly pushed or pre-existing) — open its PR.
   const body = `Session **${sessionId}** — chunks squash-merge here (ADR 0020). Review this one PR.\n\n${title}`;
-  const prUrl = (
-    await $`gh pr create --repo ${config.ghRepo} --head ${branch} --base main --title ${`Session ${sessionId}: ${title}`} --body ${body}`.text()
-  ).trim();
+  const prUrl = await ghFn(["pr", "create", "--repo", config.ghRepo, "--head", branch, "--base", "main", "--title", `Session ${sessionId}: ${title}`, "--body", body]);
 
   const prNumber = Number(prUrl.split("/").pop());
   if (!Number.isInteger(prNumber)) throw new Error(`session-open: could not parse PR number from '${prUrl}'`);
