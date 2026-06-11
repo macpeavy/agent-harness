@@ -22,13 +22,21 @@ afterEach(() => {
 
 describe("classifyFailure (the ADR 0023 taxonomy in code)", () => {
   it("parks every recoverable mode with its reason; only substrate is terminal", () => {
-    expect(classifyFailure({ kind: "no-op" })).toEqual({ terminal: false, reason: "no-op" });
+    expect(classifyFailure({ kind: "no-op" })).toMatchObject({ terminal: false, reason: "no-op" });
     expect(classifyFailure({ kind: "error", message: "boom" })).toEqual({ terminal: false, reason: "error", message: "boom" });
     expect(classifyFailure({ kind: "timeout", message: "slow" })).toEqual({ terminal: false, reason: "attended", message: "slow" });
-    expect(classifyFailure({ kind: "amend-cap" })).toEqual({ terminal: false, reason: "re-decompose" });
-    expect(classifyFailure({ kind: "owner-note" })).toEqual({ terminal: false, reason: "attended" });
+    expect(classifyFailure({ kind: "amend-cap" })).toMatchObject({ terminal: false, reason: "re-decompose" });
+    expect(classifyFailure({ kind: "owner-note" })).toMatchObject({ terminal: false, reason: "attended" });
     expect(classifyFailure({ kind: "blocked", message: "bash: rm" })).toEqual({ terminal: false, reason: "attended", message: "bash: rm" });
     expect(classifyFailure({ kind: "substrate", message: "db gone" })).toEqual({ terminal: true, message: "db gone" });
+  });
+
+  it("every parked mode carries a message — escalation_reason is never null (ADR 0027)", () => {
+    // The AGENT-55 blind-routing bug: `attended` with a null reason. The modes without a
+    // caller-supplied message get a default that names the cause.
+    expect(classifyFailure({ kind: "no-op" }).message).toContain("changed nothing");
+    expect(classifyFailure({ kind: "amend-cap" }).message).toContain("amend cap");
+    expect(classifyFailure({ kind: "owner-note" }).message).toContain("owner's review note");
   });
 });
 
@@ -43,6 +51,22 @@ describe("escalateOrFail (the single write surface)", () => {
     escalateOrFail(repo, "d1", { kind: "no-op" });
     expect(repo.get("d1")?.state).toBe("escalated");
     expect(repo.get("d1")?.escalated).toBe("no-op");
+    expect(repo.get("d1")?.escalationReason).not.toBeNull(); // the default message is recorded
+  });
+
+  it("parks a failed owner-note amend with the recorded reason (ADR 0027)", () => {
+    repo.create(SEED);
+    repo.transition("d1", "building");
+    repo.transition("d1", "review");
+    repo.transition("d1", "done");
+    repo.reopenForReview("d1", "the owner's notes");
+    escalateOrFail(repo, "d1", { kind: "owner-note" });
+
+    const d = repo.get("d1");
+    expect(d?.state).toBe("escalated");
+    expect(d?.escalated).toBe("attended");
+    expect(d?.escalationReason).toContain("owner's review note");
+    expect(d?.pendingFindings).toBe("the owner's notes"); // kept for the amend-resume promote
   });
 
   it("parks a leg error with its message recorded", () => {

@@ -271,3 +271,36 @@ describe("reopenForReview (owner-review reopen, ADR 0020 slice 4b)", () => {
     expect(() => repo.reopenForReview("d1", "x")).toThrow("illegal transition building → amending");
   });
 });
+
+describe("resumeAmend (amend-resume promote, ADR 0027)", () => {
+  // An owner-review amend that escalated: done → amending (findings stashed) → escalated.
+  function seedAmendEscalated(id: string): void {
+    repo.create({ ...SEED, id });
+    repo.transition(id, "building");
+    repo.transition(id, "review");
+    repo.transition(id, "done");
+    repo.reopenForReview(id, "the owner's notes");
+    repo.escalate(id, "attended", "builder could not action the owner's review note");
+  }
+
+  it("moves an escalated dispatch back to amending on the strong tier, keeping the findings", () => {
+    seedAmendEscalated("d1");
+    repo.resumeAmend("d1", "strong");
+
+    const d = repo.get("d1");
+    expect(d?.state).toBe("amending");
+    expect(d?.tier).toBe("strong");
+    expect(d?.pendingFindings).toBe("the owner's notes"); // the daemon amends against these
+  });
+
+  it("leaves the tier unchanged when none is given", () => {
+    seedAmendEscalated("d1");
+    repo.resumeAmend("d1");
+    expect(repo.get("d1")?.tier).toBeNull(); // SEED carries no tier
+  });
+
+  it("rejects resuming a dispatch that isn't escalated", () => {
+    repo.create({ ...SEED, id: "d1" });
+    expect(() => repo.resumeAmend("d1", "strong")).toThrow("illegal transition queued → amending");
+  });
+});

@@ -491,6 +491,89 @@ describe("promote", () => {
   });
 });
 
+describe("amend-round escalation routability (ADR 0027 / AGENT-55)", () => {
+  // The PR #151 shakedown shape: a landed session in review, its chunk's dispatch reopened by
+  // the owner's review, and the amend round escalating — previously an unroutable dead end
+  // (dispatch escalated, chunk stuck at done, promote/redecompose both throwing).
+  function amendRoundEscalated(): void {
+    decompose([chunk("a")]);
+    plan.linkSessionPr("S1", { branch: "session-main-S1", prNumber: 151, prUrl: "http://pr/151" });
+    service.dispatchReady("S1");
+    driveTo("a", "done");
+    service.recordOutcomes("S1"); // session → review
+    service.addressReview("S1", [{ path: "src/a.ts", body: "remove the droppings file" }]);
+    // The amend round fails (the daemon's owner-note park) — findings are KEPT on the row.
+    dispatch.escalate("a", "attended", "builder could not action the owner's review note (the amend changed nothing)");
+  }
+
+  it("flows the dispatch escalation onto the done chunk and surfaces the session (review → needs-attention)", () => {
+    amendRoundEscalated();
+    expect(plan.getChunk("a")?.state).toBe("done"); // pre-flow: the old dead end
+    const flowed = service.recordOutcomes("S1");
+
+    expect(flowed).toEqual([{ chunkId: "a", outcome: "escalated" }]);
+    expect(plan.getChunk("a")?.state).toBe("escalated"); // routable now
+    expect(plan.getSession("S1")?.state).toBe("needs-attention"); // not silently stuck in review
+  });
+
+  it("flows the escalation only once — a second pass records nothing new", () => {
+    amendRoundEscalated();
+    service.recordOutcomes("S1");
+    expect(service.recordOutcomes("S1")).toEqual([]);
+    expect(plan.getChunk("a")?.state).toBe("escalated");
+  });
+
+  it("promote on an amend escalation resumes the SAME dispatch as a strong-tier amend, keeping the findings", () => {
+    amendRoundEscalated();
+    service.recordOutcomes("S1");
+
+    const made = service.promote("a");
+
+    expect(made).toEqual({ chunkId: "a", dispatchId: "a" }); // same dispatch — no fresh rebuild
+    const d = dispatch.get("a");
+    expect(d?.state).toBe("amending"); // re-enters the amend cycle the daemon drives
+    expect(d?.tier).toBe("strong");
+    expect(d?.pendingFindings).toContain("remove the droppings file"); // amends the original notes
+    expect(plan.getChunk("a")?.state).toBe("dispatched");
+    expect(plan.getChunk("a")?.tierHint).toBe("strong");
+  });
+
+  it("the resumed strong amend lands and the session returns to review (the full AGENT-55 chain)", () => {
+    amendRoundEscalated();
+    service.recordOutcomes("S1");
+    service.promote("a");
+
+    // The daemon drives the strong amend: it succeeds, re-reviews clean, merges, done.
+    dispatch.clearPendingFindings("a");
+    dispatch.transition("a", "review");
+    dispatch.transition("a", "done");
+    service.recordOutcomes("S1");
+
+    expect(plan.getChunk("a")?.state).toBe("done");
+    expect(plan.getSession("S1")?.state).toBe("review"); // back with the owner, signal re-armed
+    expect(plan.getSession("S1")?.signaledAt).toBeNull(); // the notify pass re-notifies
+  });
+
+  it("redecompose is also legal on an amend-escalated chunk", () => {
+    amendRoundEscalated();
+    service.recordOutcomes("S1");
+
+    const d = service.redecompose("a", { chunks: [chunk("a1"), chunk("a2")], edges: [{ from: "a1", to: "a2" }] });
+    expect(d.chunkIds).toEqual(["a1", "a2"]);
+    expect(plan.getChunk("a")?.state).toBe("superseded");
+  });
+
+  it("promote on a never-landed escalation still materialises a fresh dispatch (no findings → rebuild path)", () => {
+    decompose([chunk("a")]);
+    service.dispatchReady("S1");
+    driveTo("a", "escalated"); // a plain build-time park, no pendingFindings
+    service.recordOutcomes("S1");
+
+    const made = service.promote("a");
+    expect(made.dispatchId).toBe("a-r2"); // the existing fresh-rebuild semantics, unchanged
+  });
+});
+
 describe("redecompose (session-scoped)", () => {
   it("retires the chunk and the replacements dispatch through the normal path", () => {
     decompose([chunk("a"), chunk("b")], [{ from: "a", to: "b" }]);

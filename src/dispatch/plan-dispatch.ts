@@ -477,6 +477,13 @@ export class PlanDispatchService {
    * (ADR 0019): mark the chunk 'strong', then materialise a fresh dispatch (a new id, so the
    * registry's stored branch and the build leg's derived branch still agree on one id — the
    * re-dispatch branch fix). The chunk moves escalated → dispatched. Returns the new link.
+   *
+   * The amend-resume variant (ADR 0027): a chunk that escalated out of an owner-review amend
+   * round has ALREADY landed — its content is in session-main, and its escalated dispatch
+   * still carries the findings the amend failed against (`pendingFindings`, kept on a failed
+   * amend). A fresh rebuild would re-apply the landed contract and park as `no-op`; instead,
+   * the SAME dispatch resumes the amend cycle on the strong tier (escalated → amending), the
+   * daemon amends against the kept findings, and the fix re-merges into session-main.
    */
   promote(escalatedChunkId: string): MaterialisedDispatch {
     const chunk = this.plan.getChunk(escalatedChunkId);
@@ -485,6 +492,15 @@ export class PlanDispatchService {
       throw new Error(`chunk ${escalatedChunkId} is not escalated (state: ${chunk.state})`);
 
     this.plan.setTierHint(escalatedChunkId, "strong");
+
+    const parked = chunk.dispatchId ? this.dispatch.get(chunk.dispatchId) : null;
+    if (parked && parked.state === "escalated" && parked.pendingFindings !== null) {
+      // Amend-resume: strong tier on the same dispatch, same branch, same kept findings.
+      this.dispatch.resumeAmend(parked.id, "strong");
+      this.plan.linkDispatch(chunk.id, parked.id); // escalated → dispatched, same link
+      return { chunkId: chunk.id, dispatchId: parked.id };
+    }
+
     const promoted = this.plan.getChunk(escalatedChunkId);
     if (!promoted) throw new Error(`no chunk ${escalatedChunkId}`);
     const session = this.plan.getSession(promoted.sessionId);
@@ -553,13 +569,22 @@ export class PlanDispatchService {
 
     const flowed: FlowedOutcome[] = [];
     for (const chunk of this.plan.listChunks(sessionId)) {
-      if (chunk.state !== "dispatched" || !chunk.dispatchId) continue;
+      if (!chunk.dispatchId) continue;
       const dispatch = this.dispatch.get(chunk.dispatchId);
       if (!dispatch) continue;
-      const outcome = outcomeFor(dispatch.state);
-      if (!outcome) continue; // still in flight
-      this.plan.recordOutcome(chunk.id, outcome);
-      flowed.push({ chunkId: chunk.id, outcome });
+      if (chunk.state === "dispatched") {
+        const outcome = outcomeFor(dispatch.state);
+        if (!outcome) continue; // still in flight
+        this.plan.recordOutcome(chunk.id, outcome);
+        flowed.push({ chunkId: chunk.id, outcome });
+      } else if (chunk.state === "done" && dispatch.state === "escalated") {
+        // An owner-review amend round escalated (ADR 0027): the dispatch parked but the chunk
+        // had already landed. Flow the escalation onto the chunk (done → escalated) so the
+        // park is ROUTABLE — promote/redecompose validate chunk state, and a chunk stuck at
+        // `done` over an escalated dispatch is exactly the dead end this removes.
+        this.plan.recordOutcome(chunk.id, "escalated");
+        flowed.push({ chunkId: chunk.id, outcome: "escalated" });
+      }
     }
 
     // Derive the session's state from its chunks (ADR 0020 §6 happy path + ADR 0023 row 7 failure
@@ -580,6 +605,11 @@ export class PlanDispatchService {
       } else if (buildComplete) {
         this.plan.transitionSession(sessionId, "review");
       }
+    } else if (session.state === "review" && blocked.length > 0) {
+      // An owner-review amend round escalated within `review` (ADR 0027): surface the stuck
+      // session — the PR will not update by itself, and silence here is the AGENT-55 dead end.
+      // The notify pass wakes the chief with the parked chunk + recorded reason.
+      this.plan.transitionSession(sessionId, "needs-attention");
     } else if (session.state === "needs-attention" && blocked.length === 0 && session.budgetExceededUsd === null) {
       // The chief routed the parked chunk(s) — resume. Back to `building` for the re-dispatched
       // work; straight to `review` only if routing already resolved everything to done/superseded.

@@ -242,6 +242,17 @@ export class DispatchRepository {
     this.patch(id, { pendingFindings: null });
   }
 
+  /**
+   * Resume an escalated amend round (ADR 0027): move `escalated → amending`, optionally
+   * switching the build tier — the chief's promote on an amend-round escalation re-enters
+   * the amend cycle on the strong builder against the kept `pendingFindings`, instead of
+   * rebuilding an already-landed contract. `move` enforces the graph; the daemon picks the
+   * `amending` row up and drives the owner-amend path.
+   */
+  resumeAmend(id: string, tier?: BuildTier): void {
+    this.move(id, "amending", tier === undefined ? {} : { tier });
+  }
+
   /** Stamp a dispatch as reaped (the terminal reaper cleaned its abandoned resources). */
   markReaped(id: string): void {
     this.patch(id, { reapedAt: Date.now() });

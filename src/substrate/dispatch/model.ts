@@ -58,7 +58,11 @@ export const TRANSITIONS: Record<DispatchState, readonly DispatchState[]> = {
   // and is rewoken on resolution — re-decompose / tier-promote / attended all re-enter
   // at `building` — or is abandoned to `failed` (ADR 0008). Because it's non-terminal,
   // resumeIncomplete() surfaces it; the daemon parks it until an external rewake.
-  escalated: ["building", "failed"],
+  // `escalated → amending` is the amend-resume edge (ADR 0027): a dispatch that escalated
+  // out of an owner-review amend round still has its findings (pendingFindings is kept on
+  // a failed amend), so the chief's promote re-enters the AMEND cycle on the strong tier
+  // — a full rebuild would re-apply an already-landed contract and park as `no-op`.
+  escalated: ["building", "amending", "failed"],
   failed: [],
   // operator kill switch (the abandon CLI) — terminal, reached by a deliberate force-transition
   // (DispatchRepository.abandonMany), not a graph edge: an operator kills a dispatch from any state.

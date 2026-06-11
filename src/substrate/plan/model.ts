@@ -41,6 +41,11 @@ export const FEATURE_TRANSITIONS: Record<FeatureState, readonly FeatureState[]> 
  * — distinct from `review` (build-complete, route nothing) so the signal says "stuck, route me"
  * not "ready for review". It resumes to `building` once the chief routes the parked chunk. A
  * session NEVER spins in `building` with a parked/failed chunk.
+ *
+ * `review → needs-attention` is the amend-round failure edge (ADR 0027): the owner-review →
+ * amend loop runs within `review`, and when an amend round escalates its dispatch the session
+ * must surface as stuck — not sit silently in `review` with a PR that will never update. It
+ * returns to `review` once the chief routes the escalation and the amend lands.
  */
 export const SESSION_STATES = [
   "planning",
@@ -58,7 +63,7 @@ export const SESSION_TRANSITIONS: Record<SessionState, readonly SessionState[]> 
   planning: ["ready"],
   ready: ["building"],
   building: ["review", "needs-attention", "failed"], // all landed → review; any parked/failed → needs-attention
-  review: ["done", "failed"], // the owner merges the PR → done
+  review: ["done", "needs-attention", "failed"], // owner merges → done; an amend round escalated → needs-attention (ADR 0027)
   "needs-attention": ["building", "review"], // chief routed the parked chunk → resume building (or review if all resolved)
   done: [],
   failed: [],
@@ -70,7 +75,13 @@ export const SESSION_TRANSITIONS: Record<SessionState, readonly SessionState[]> 
  * `escalated` is non-terminal — the chief resolves a parked chunk by re-dispatching it on
  * the strong tier (`escalated → dispatched`, tier-promote) or by splitting it into smaller
  * chunks (`escalated → superseded`, re-decompose; the splits are new chunks). Terminal:
- * done, failed, superseded.
+ * failed, superseded.
+ *
+ * `done` is a RESTING state, not terminal (ADR 0027, mirroring the dispatch graph): an
+ * owner-review amend reopens a landed chunk's dispatch, and if that amend round escalates,
+ * the chunk follows it (`done → escalated`) so the escalation is routable at the plan layer
+ * — promote/redecompose validate CHUNK state, and a chunk stuck at `done` while its dispatch
+ * parks is exactly the unroutable divergence ADR 0027 removes.
  */
 export const CHUNK_STATES = ["planned", "dispatched", "done", "escalated", "failed", "superseded", "abandoned"] as const;
 export type ChunkState = (typeof CHUNK_STATES)[number];
@@ -79,7 +90,7 @@ export const CHUNK_TRANSITIONS: Record<ChunkState, readonly ChunkState[]> = {
   planned: ["dispatched"],
   dispatched: ["done", "escalated", "failed"],
   escalated: ["dispatched", "planned", "superseded"], // tier-promote, rewind, or re-decompose
-  done: [],
+  done: ["escalated"], // an owner-review amend round escalated (ADR 0027) — the chunk follows its dispatch
   failed: [],
   superseded: [], // re-decomposed: retired, its work moved to the replacement chunks
   abandoned: [], // operator kill switch (abandon CLI) — terminal, reached by force-transition
