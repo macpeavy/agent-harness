@@ -176,7 +176,12 @@
         "task": "deny",
         "webfetch": "deny",
         "websearch": "deny",
-        "bash": "deny",
+        "bash": {
+          "*": "deny",
+          "gh pr view*": "allow",
+          "gh pr diff*": "allow",
+          "gh pr checks*": "allow"
+        },
         "substrate_*": "allow"
       }
     }
