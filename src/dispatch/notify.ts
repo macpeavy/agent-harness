@@ -2,14 +2,18 @@
 // session-loop tick after recordOutcomes. Asymmetric by actor: a session entering
 // `needs-attention` wakes the CHIEF (routing a parked chunk is chief work — promptAsync into
 // its registered session); a session entering `review` notifies the OWNER (merging is owner
-// work — the Notifier seam, default console); a session auto-closed to `done` (the loop
+// work — the Notifier seam, default console) AND FYIs the chief (ADR 0028 — the chief is the
+// owner's conversational interface; without the FYI it sits silent through build-complete,
+// having told the owner it would check back); a session auto-closed to `done` (the loop
 // detected the merged PR) tells the CHIEF its picture changed (the triad's third leg — the
 // manual close_session suppresses this, the chief already knows). Exactly-once per transition
 // via the session's `signaled_at` stamp: the pass selects signalling-state sessions with
 // `signaled_at IS NULL`, fires, stamps; every state transition clears the stamp, so a re-park
 // re-signals. A failed push is swallowed and left un-stamped (retried next tick; a later chief
 // launch picks it up) — push is an accelerator on top of the durable state + `status` pull,
-// never the system of record.
+// never the system of record. The review-transition chief FYI is the one at-most-once leg:
+// it rides the owner signal's stamp, so a missing chief never re-rings the owner's bell
+// (ADR 0028; a chief that missed it reads the session from `status`).
 
 import { OpencodeClient } from "../opencode/client";
 import type { PlanRepository, Session } from "../substrate/plan";
@@ -122,6 +126,20 @@ export function chiefCiFailurePrompt(notice: CiFailureNotice): string {
     `the fix with amend_chunk(chunkId, findings) — the builder amends, the reviewer re-reviews, ` +
     `the fix lands in session-main and the checks re-run. If the failure needs work no existing ` +
     `chunk owns, surface it to the owner instead.`
+  );
+}
+
+/** Render the chief's review-ready FYI (ADR 0028): the session is built and with the owner —
+ *  nothing to route, nothing to close; surface it to the owner if attended. */
+export function chiefReviewReadyPrompt(notice: ReviewReadyNotice): string {
+  const pr = notice.prUrl ?? (notice.prNumber !== null ? `PR #${notice.prNumber}` : "its PR");
+  return (
+    `[substrate notify] Session ${notice.sessionId} of feature "${notice.featureTitle}" is ` +
+    `BUILT and awaiting the owner's review — ${pr} (${notice.chunkCount} chunk(s), ` +
+    `$${notice.costUsd.toFixed(4)}). The owner has been notified on their channels too.\n\n` +
+    `Nothing to route and nothing to close — the substrate watches the PR and will tell you ` +
+    `when it merges (do NOT call close_session). If you're in an attended session, give the ` +
+    `owner a one-line heads-up with the PR link; otherwise just update your picture.`
   );
 }
 
@@ -357,28 +375,54 @@ export class NotifyPass {
     }
   }
 
-  // Notify the owner that a session's PR is ready. False only if the notifier threw —
-  // un-stamped, retried next tick (at-least-once over silent loss).
+  // Notify the owner that a session's PR is ready, then FYI the chief (ADR 0028). False only
+  // if the OWNER notifier threw — un-stamped, retried next tick (at-least-once over silent
+  // loss). The chief FYI is best-effort within the same signal: a missing chief or a failed
+  // wake never blocks the stamp (re-firing would re-ring the owner's bell every tick), and
+  // the miss is benign — a later chief sees the in-review session at the top of `status`.
   private async notifyOwner(session: Session): Promise<boolean> {
     const feature = this.plan.getFeature(session.featureId);
     if (!feature) return false;
     const status = this.service.status(feature.id);
     const chunkCount = this.sessionStatus(status, session.id)?.chunks.length ?? 0;
+    const notice: ReviewReadyNotice = {
+      sessionId: session.id,
+      featureId: feature.id,
+      featureTitle: feature.title,
+      prNumber: session.prNumber,
+      prUrl: session.prUrl,
+      chunkCount,
+      costUsd: status.cost.buildUsd + status.cost.reviewUsd + status.cost.amendUsd,
+    };
     try {
-      await this.notifier.reviewReady({
-        sessionId: session.id,
-        featureId: feature.id,
-        featureTitle: feature.title,
-        prNumber: session.prNumber,
-        prUrl: session.prUrl,
-        chunkCount,
-        costUsd: status.cost.buildUsd + status.cost.reviewUsd + status.cost.amendUsd,
-      });
-      return true;
+      await this.notifier.reviewReady(notice);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logMissOnce(session.id, `owner notify failed for session ${session.id}: ${message}`);
       return false;
+    }
+    await this.fyiChiefReviewReady(notice);
+    return true;
+  }
+
+  // The chief's review-ready FYI (ADR 0028) — at-most-once, riding the owner signal's stamp.
+  private async fyiChiefReviewReady(notice: ReviewReadyNotice): Promise<void> {
+    const chief = this.chiefs.getChief();
+    if (!chief) {
+      this.logMissOnce(
+        `review-fyi:${notice.sessionId}`,
+        `no chief registered — session ${notice.sessionId} reached review un-announced (a later chief sees it via status)`,
+      );
+      return;
+    }
+    try {
+      await this.wake({ baseUrl: chief.baseUrl, sessionId: chief.sessionId }, chiefReviewReadyPrompt(notice));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logMissOnce(
+        `review-fyi:${notice.sessionId}`,
+        `chief review-ready FYI failed for session ${notice.sessionId} (stale registration?): ${message}`,
+      );
     }
   }
 

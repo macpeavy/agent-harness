@@ -149,22 +149,56 @@ describe("NotifyPass — needs-attention wakes the chief (ADR 0024)", () => {
   });
 });
 
-describe("NotifyPass — review notifies the owner (ADR 0024)", () => {
-  it("fires the Notifier once with the PR linkage; the chief is NOT woken", async () => {
+describe("NotifyPass — review notifies the owner and FYIs the chief (ADR 0024 + 0028)", () => {
+  it("fires the Notifier once with the PR linkage and sends the chief the review-ready FYI", async () => {
     seedDispatched();
     plan.linkSessionPr("S1", { branch: "session-main-S1", prNumber: 42, prUrl: "http://pr/42" });
     landChunk();
 
     expect(await pass().runOnce()).toBe(1);
-    expect(wakes).toEqual([]); // review-ready is owner work — strong tokens stay unspent
     expect(notices.length).toBe(1);
     expect(notices[0]?.prNumber).toBe(42);
     expect(notices[0]?.prUrl).toBe("http://pr/42");
     expect(notices[0]?.featureTitle).toBe("A feature");
     expect(notices[0]?.chunkCount).toBe(1);
+    // The chief FYI (ADR 0028): built + with the owner, nothing to route or close.
+    expect(wakes.length).toBe(1);
+    expect(wakes[0]?.prompt).toContain("awaiting the owner's review");
+    expect(wakes[0]?.prompt).toContain("http://pr/42");
+    expect(wakes[0]?.prompt).toContain("do NOT call close_session");
 
-    expect(await pass().runOnce()).toBe(0); // once per transition
+    expect(await pass().runOnce()).toBe(0); // once per transition — owner and FYI both
     expect(notices.length).toBe(1);
+    expect(wakes.length).toBe(1);
+  });
+
+  it("with no chief registered, the owner is still notified and the signal stamps (FYI is at-most-once)", async () => {
+    seedDispatched();
+    plan.linkSessionPr("S1", { branch: "session-main-S1", prNumber: 42, prUrl: "http://pr/42" });
+    landChunk();
+    registration = null;
+
+    expect(await pass().runOnce()).toBe(1); // the owner signal fires and stamps
+    expect(notices.length).toBe(1);
+    expect(wakes).toEqual([]);
+    expect(plan.getSession("S1")?.signaledAt).not.toBeNull(); // no re-ring of the owner's bell
+
+    registration = { id: "chief", sessionId: "ses_chief", baseUrl: "http://localhost:4096", registeredAt: 2 };
+    expect(await pass().runOnce()).toBe(0); // the missed FYI does NOT re-fire — status covers it
+    expect(wakes).toEqual([]);
+  });
+
+  it("a failed chief FYI never blocks the owner's stamp", async () => {
+    seedDispatched();
+    plan.linkSessionPr("S1", { branch: "session-main-S1", prNumber: 42, prUrl: "http://pr/42" });
+    landChunk();
+    const p = pass(async () => {
+      throw new Error("connection refused"); // every chief wake fails
+    });
+
+    expect(await p.runOnce()).toBe(1); // owner notified, stamped
+    expect(notices.length).toBe(1);
+    expect(plan.getSession("S1")?.signaledAt).not.toBeNull();
   });
 
   it("a throwing Notifier is contained and the signal stays pending (at-least-once)", async () => {
@@ -178,6 +212,7 @@ describe("NotifyPass — review notifies the owner (ADR 0024)", () => {
 
     expect(await throwing.runOnce()).toBe(0); // must not throw
     expect(plan.getSession("S1")?.signaledAt).toBeNull(); // retried next tick
+    expect(wakes).toEqual([]); // no FYI either — it follows a successful owner notify
   });
 });
 
