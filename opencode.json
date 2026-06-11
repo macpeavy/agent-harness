@@ -180,7 +180,9 @@
           "*": "deny",
           "gh pr view*": "allow",
           "gh pr diff*": "allow",
-          "gh pr checks*": "allow"
+          "gh pr checks*": "allow",
+          "gh issue view*": "allow",
+          "gh issue list*": "allow"
         },
         "substrate_*": "allow"
       }
