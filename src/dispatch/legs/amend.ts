@@ -14,6 +14,7 @@ import { removeWorktree } from "./worktree";
 import type { SubstrateConfig } from "../../config";
 import type { BuildTier } from "../../substrate/dispatch";
 import type { ReviewTarget } from "./review";
+import type { RunAgentOpts, AgentRun } from "../../opencode/agent-runner";
 
 export interface AmendResult {
   changed: boolean;
@@ -29,6 +30,8 @@ export async function runAmendLeg(
   findings: string,
   config: SubstrateConfig,
   tier?: BuildTier,
+  runAgentFn?: (worktree: string, opts: RunAgentOpts) => Promise<AgentRun>,
+  installFn?: (worktree: string) => Promise<void>,
 ): Promise<AmendResult> {
   mkdirSync(config.worktreeRoot, { recursive: true });
   const worktree = join(config.worktreeRoot, `amend-${target.branch.replace(/[^a-zA-Z0-9]+/g, "-")}`);
@@ -41,7 +44,8 @@ export async function runAmendLeg(
   await $`git -C ${config.repoPath} fetch origin ${target.branch}`.quiet();
   await $`git -C ${config.repoPath} worktree add --force ${worktree} -B ${target.branch} origin/${target.branch}`.quiet();
   // Install deps so the builder can typecheck/test its amend in-worktree.
-  await $`bun install`.cwd(worktree).quiet();
+  const install = installFn ?? ((wt: string) => $`bun install`.cwd(wt).quiet().then(() => undefined));
+  await install(worktree);
 
   try {
     const agent = tier === "strong" ? config.builderStrongAgent : config.builderAgent;
@@ -49,7 +53,8 @@ export async function runAmendLeg(
       `A reviewer raised blocking findings on your change. Address them by editing files in ` +
       `the current working directory, then typecheck/test. Do NOT run git — the substrate ` +
       `handles version control.\n\nReview findings:\n\n${findings}`;
-    const run = await runAgent(worktree, {
+    const agentFn = runAgentFn ?? runAgent;
+    const run = await agentFn(worktree, {
       title: `amend ${target.branch}`,
       agent,
       prompt,
