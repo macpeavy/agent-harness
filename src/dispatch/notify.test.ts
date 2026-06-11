@@ -289,6 +289,62 @@ describe("NotifyPass — a CI failure on a built session wakes the chief (the CI
   });
 });
 
+describe("NotifyPass — an owner response on an in-review PR wakes the chief (AGENT-54)", () => {
+  // S1 in review with a PR and a recorded owner response at t=1000.
+  function seedOwnerResponse(): void {
+    seedDispatched();
+    plan.linkSessionPr("S1", { branch: "session-main-S1", prNumber: 42, prUrl: "http://pr/42" });
+    landChunk();
+    plan.stampSignaled("S1"); // the review→owner signal already fired
+    plan.setOwnerResponse("S1", 1_000);
+  }
+
+  it("wakes the chief once per response wave with the address_review routing", async () => {
+    seedOwnerResponse();
+
+    expect(await pass().runOnce()).toBe(1);
+    expect(wakes.length).toBe(1);
+    expect(wakes[0]?.prompt).toContain("owner responded");
+    expect(wakes[0]?.prompt).toContain('address_review("S1")');
+    expect(notices).toEqual([]); // routing the review is chief work, not an owner ask
+
+    expect(await pass().runOnce()).toBe(0); // stamped for this wave — exactly once
+    expect(wakes.length).toBe(1);
+  });
+
+  it("a NEWER response wave re-signals (the owner replied again after an amend)", async () => {
+    seedOwnerResponse();
+    const p = pass();
+    await p.runOnce();
+    expect(wakes.length).toBe(1);
+
+    plan.setOwnerResponse("S1", 2_000); // the probe recorded a newer wave
+    expect(await p.runOnce()).toBe(1);
+    expect(wakes.length).toBe(2);
+  });
+
+  it("degrades cleanly with no chief: the response stays pending for a later launch", async () => {
+    seedOwnerResponse();
+    registration = null;
+
+    const p = pass();
+    expect(await p.runOnce()).toBe(0);
+    expect(plan.getSession("S1")?.ownerResponseSignaledAt).toBeNull(); // un-stamped, still pending
+
+    registration = { id: "chief", sessionId: "ses_chief", baseUrl: "http://localhost:4096", registeredAt: 2 };
+    expect(await p.runOnce()).toBe(1);
+  });
+
+  it("a failed wake is swallowed and the signal stays pending", async () => {
+    seedOwnerResponse();
+    const p = pass(async () => {
+      throw new Error("connection refused");
+    });
+    expect(await p.runOnce()).toBe(0); // must not throw
+    expect(plan.getSession("S1")?.ownerResponseSignaledAt).toBeNull();
+  });
+});
+
 describe("chiefWakePrompt", () => {
   it("renders the routing verbs and the JSON payload", () => {
     const prompt = chiefWakePrompt({

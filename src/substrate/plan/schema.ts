@@ -67,6 +67,15 @@ export const sessions = sqliteTable("sessions", {
   ciFailedChecks: text("ci_failed_checks"),
   // The head SHA whose failure was already signaled — the CI leg's exactly-once key.
   ciSignaledSha: text("ci_signaled_sha"),
+  // Owner-response state on the session PR, written by the in-review probe (AGENT-54 — the
+  // mirror image of ADR 0024: "owner responded and nobody noticed"). The latest owner review
+  // activity (a changes-requested/commented review or an issue comment, bot identity
+  // excluded) the probe saw, in epoch ms. The notify pass wakes the chief to run
+  // address_review once per response wave: owner_response_signaled_at is the stamp, and a
+  // NEWER response (a later timestamp) un-matches it and re-arms the signal — the same
+  // keyed exactly-once shape as the CI leg's ci_signaled_sha.
+  ownerResponseAt: integer("owner_response_at"),
+  ownerResponseSignaledAt: integer("owner_response_signaled_at"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });

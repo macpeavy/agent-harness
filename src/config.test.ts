@@ -36,6 +36,7 @@ describe("loadConfig", () => {
     "AH_AGENT_IDLE_MS",
     "AH_AGENT_TIMEOUT_MS",
     "AH_PR_POLL_MS",
+    "AH_BOT_LOGIN",
   ] as const;
   let saved: Record<string, string | undefined>;
 
@@ -67,6 +68,7 @@ describe("loadConfig", () => {
     expect(config.amendCap).toBe(3);
     expect(config.agentIdleMs).toBe(120_000); // idle window, not a wall-clock cap
     expect(config.agentTimeoutMs).toBe(1_800_000); // absolute backstop
+    expect(config.botLogin).toBeNull(); // unset = derived lazily from gh (AGENT-54)
   });
 
   it("puts worktrees under an overridden repo root (AGENT-38)", async () => {
@@ -88,6 +90,7 @@ describe("loadConfig", () => {
     process.env.AH_AGENT_IDLE_MS = "90000";
     process.env.AH_AGENT_TIMEOUT_MS = "900000";
     process.env.AH_PR_POLL_MS = "30000";
+    process.env.AH_BOT_LOGIN = "harness-bot";
     const config = await loadConfig();
 
     expect(config).toEqual({
@@ -101,6 +104,7 @@ describe("loadConfig", () => {
       agentIdleMs: 90000,
       agentTimeoutMs: 900000,
       prPollMs: 30000,
+      botLogin: "harness-bot",
     });
   });
 

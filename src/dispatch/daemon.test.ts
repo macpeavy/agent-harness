@@ -22,6 +22,7 @@ const CONFIG: SubstrateConfig = {
   agentIdleMs: 120_000,
   agentTimeoutMs: 1_800_000,
   prPollMs: 60_000,
+  botLogin: null,
 };
 
 const ISSUE: Issue = { id: "ISSUE-1", title: "Add a thing", body: "Do the thing." };

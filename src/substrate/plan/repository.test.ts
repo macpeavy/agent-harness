@@ -441,3 +441,36 @@ describe("CI failure state: recorded per head SHA, signaled once per head", () =
     expect(plan.listUnsignaledCiFailures().map((s) => s.id)).toEqual(["S1"]); // re-armed
   });
 });
+
+describe("owner-response state: recorded per wave, signaled once per wave (AGENT-54)", () => {
+  it("setOwnerResponse records the wave timestamp, monotonically", () => {
+    seedFeatureSession();
+    plan.setOwnerResponse("S1", 1_000);
+    expect(plan.getSession("S1")?.ownerResponseAt).toBe(1_000);
+
+    plan.setOwnerResponse("S1", 500); // an older read never rewinds the wave
+    expect(plan.getSession("S1")?.ownerResponseAt).toBe(1_000);
+
+    plan.setOwnerResponse("S1", 2_000);
+    expect(plan.getSession("S1")?.ownerResponseAt).toBe(2_000);
+  });
+
+  it("throws on an unknown session", () => {
+    expect(() => plan.setOwnerResponse("ghost", 1)).toThrow("no session ghost");
+    expect(() => plan.stampOwnerResponseSignaled("ghost", 1)).toThrow("no session ghost");
+  });
+
+  it("listUnsignaledOwnerResponses selects waves that aren't stamped; a newer wave re-arms", () => {
+    seedFeatureSession();
+    expect(plan.listUnsignaledOwnerResponses()).toEqual([]); // nothing recorded
+
+    plan.setOwnerResponse("S1", 1_000);
+    expect(plan.listUnsignaledOwnerResponses().map((s) => s.id)).toEqual(["S1"]); // pending
+
+    plan.stampOwnerResponseSignaled("S1", 1_000);
+    expect(plan.listUnsignaledOwnerResponses()).toEqual([]); // signaled for this wave
+
+    plan.setOwnerResponse("S1", 2_000); // the owner replied again
+    expect(plan.listUnsignaledOwnerResponses().map((s) => s.id)).toEqual(["S1"]); // re-armed
+  });
+});

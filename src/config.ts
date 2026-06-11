@@ -37,6 +37,10 @@ export interface SubstrateConfig {
    *  GitHub (AGENT-45) — one `gh pr view` per review session per interval, so detection
    *  latency trades directly against gh chatter. Default 1 min. */
   prPollMs: number;
+  /** The harness's own GitHub login (AGENT-54) — pins the identity the PR-reading legs
+   *  filter out so the bot's own comments never route as owner feedback. Null = derive it
+   *  once from `gh api user` (see legs/gh-identity.ts). */
+  botLogin: string | null;
 }
 
 // A positive integer from env, or the fallback (a malformed value doesn't silently
@@ -83,5 +87,6 @@ export async function loadConfig(): Promise<SubstrateConfig> {
     agentIdleMs: intFromEnv(process.env.AH_AGENT_IDLE_MS, 120_000),
     agentTimeoutMs: intFromEnv(process.env.AH_AGENT_TIMEOUT_MS, 1_800_000),
     prPollMs: intFromEnv(process.env.AH_PR_POLL_MS, 60_000),
+    botLogin: process.env.AH_BOT_LOGIN ?? null,
   };
 }

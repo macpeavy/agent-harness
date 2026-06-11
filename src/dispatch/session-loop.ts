@@ -202,11 +202,21 @@ export class SessionLoop {
       return true;
     }
 
+    // Owner responses (AGENT-54): a changes-requested review or new comments on the PR.
+    // Recorded by wave timestamp; the notify pass wakes the chief to run address_review,
+    // exactly-once per wave (owner_response_signaled_at). Monotonic in the repo, so a
+    // re-probe of the same wave changes nothing.
+    let progressed = false;
+    if (probe.ownerRespondedAt !== null && probe.ownerRespondedAt > (session.ownerResponseAt ?? 0)) {
+      this.plan.setOwnerResponse(sessionId, probe.ownerRespondedAt);
+      progressed = true;
+    }
+
     // CI state, keyed by head SHA. A concluded failure is recorded once per head (re-probes
     // of the same failing head change nothing); green/pending clears a stale record so a
     // later failing head re-arms the signal.
     if (probe.failedChecks.length > 0 && probe.headSha !== null) {
-      if (session.ciFailedSha === probe.headSha) return false; // already recorded for this head
+      if (session.ciFailedSha === probe.headSha) return progressed; // already recorded for this head
       this.plan.setCiFailure(sessionId, probe.headSha, probe.failedChecks);
       return true;
     }
@@ -214,7 +224,7 @@ export class SessionLoop {
       this.plan.setCiFailure(sessionId, null, null); // green again (a re-push or a re-run)
       return true;
     }
-    return false;
+    return progressed;
   }
 }
 

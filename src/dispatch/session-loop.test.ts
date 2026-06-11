@@ -19,6 +19,7 @@ const CONFIG = {
   agentIdleMs: 120_000,
   agentTimeoutMs: 1_800_000,
   prPollMs: 0, // every tick is "due" — tests drive the cadence explicitly where it matters
+  botLogin: "the-bot",
 } satisfies SubstrateConfig;
 
 let dir: string;
@@ -29,6 +30,7 @@ let opened: string[];
 let merged: Set<number>; // PR numbers gh would report MERGED
 let prProbes: number[]; // every PR probe, in order
 let ciState: { headSha: string | null; failedChecks: string[] }; // what the probe reports for checks
+let ownerRespondedAt: number | null; // what the probe reports for owner responses (AGENT-54)
 let legs: SessionLegs;
 
 beforeEach(() => {
@@ -41,8 +43,10 @@ beforeEach(() => {
   merged = new Set();
   prProbes = [];
   ciState = { headSha: "sha-1", failedChecks: [] };
+  ownerRespondedAt = null;
   // Fake legs: session-open records the call and returns canned branch/PR linkage; probePr
-  // reports merged-ness from the `merged` set and checks from `ciState` (no real git/gh).
+  // reports merged-ness from the `merged` set, checks from `ciState`, and owner responses
+  // from `ownerRespondedAt` (no real git/gh).
   legs = {
     async open(sessionId) {
       opened.push(sessionId);
@@ -50,7 +54,7 @@ beforeEach(() => {
     },
     async probePr(prNumber) {
       prProbes.push(prNumber);
-      return { merged: merged.has(prNumber), headSha: ciState.headSha, failedChecks: ciState.failedChecks };
+      return { merged: merged.has(prNumber), headSha: ciState.headSha, failedChecks: ciState.failedChecks, ownerRespondedAt };
     },
   };
 });
@@ -259,7 +263,7 @@ describe("SessionLoop.runOnce", () => {
         opened.push(sessionId);
         return { branch: `session-main-${sessionId}`, prNumber: 100, prUrl: `http://pr/${sessionId}` };
       },
-      probePr: async () => ({ merged: false, headSha: null, failedChecks: [] }),
+      probePr: async () => ({ merged: false, headSha: null, failedChecks: [], ownerRespondedAt: null }),
     };
     const loopWithThrow = new SessionLoop(plan, service, CONFIG, throwingLegs);
 
@@ -385,6 +389,34 @@ describe("SessionLoop.runOnce", () => {
       expect(plan.getSession("S1")?.state).toBe("done");
       expect(plan.getSession("S1")?.ciFailedSha).toBeNull(); // never recorded — merged short-circuits
     });
+
+    // The owner-response leg (AGENT-54): a changes-requested review / new comments on the
+    // in-review PR are recorded by wave timestamp; re-probes of the same wave change nothing;
+    // a NEWER wave re-records (which re-arms the notify signal).
+    it("records an owner response once per wave, and a newer wave re-records", async () => {
+      const l = await seedReview();
+
+      ownerRespondedAt = 1_000;
+      expect(await l.runOnce()).toBeGreaterThan(0); // recorded — durable change
+      expect(plan.getSession("S1")?.ownerResponseAt).toBe(1_000);
+      expect(plan.getSession("S1")?.state).toBe("review"); // a response never moves the state
+
+      expect(await l.runOnce()).toBe(0); // same wave — nothing new, loop sleeps
+
+      ownerRespondedAt = 2_000; // the owner left another comment after an amend landed
+      expect(await l.runOnce()).toBeGreaterThan(0);
+      expect(plan.getSession("S1")?.ownerResponseAt).toBe(2_000); // re-armed
+    });
+
+    it("an older or equal response timestamp changes nothing", async () => {
+      const l = await seedReview();
+      ownerRespondedAt = 5_000;
+      await l.runOnce();
+
+      ownerRespondedAt = 4_000; // a stale read (e.g. pagination jitter)
+      expect(await l.runOnce()).toBe(0);
+      expect(plan.getSession("S1")?.ownerResponseAt).toBe(5_000);
+    });
   });
 
   // ADR 0024: the notify pass runs each tick after the advance, and a fired signal counts
@@ -428,7 +460,7 @@ describe("SessionLoop.runOnce", () => {
         opened.push(sessionId);
         return { branch: `session-main-${sessionId}`, prNumber: 100, prUrl: `http://pr/${sessionId}` };
       },
-      probePr: async () => ({ merged: false, headSha: null, failedChecks: [] }),
+      probePr: async () => ({ merged: false, headSha: null, failedChecks: [], ownerRespondedAt: null }),
     };
     const flakyLoop = new SessionLoop(plan, service, CONFIG, flakyLegs);
 
