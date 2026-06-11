@@ -38,6 +38,13 @@ describe("flagDroppings — the fingerprint rule", () => {
     // "claudemd" alone (e.g. a legitimate module in the same area) is not a fingerprint.
     expect(flagDroppings(["src/claudemd-render.ts"], TOKENS, allReferenced)).toEqual([]);
   });
+
+  it("does not flag a module legitimately named after the work item — word echoes without the id number", () => {
+    // The normal case: the chunk is named after the file it PRODUCES. Only an issue/session
+    // NUMBER bleeding into a filename marks a dropping.
+    const tokens = fingerprintTokens("feat-201-owner-notify-s1-c1", "session-main-feat-201-owner-notify-s1");
+    expect(flagDroppings(["src/dispatch/owner-notify.ts"], tokens, allReferenced)).toEqual([]);
+  });
 });
 
 describe("flagDroppings — the reference rule", () => {

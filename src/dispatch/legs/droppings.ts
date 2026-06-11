@@ -64,8 +64,12 @@ export function fingerprintTokens(...parts: (string | null | undefined)[]): stri
 /**
  * Classify a chunk's ADDED files (pure). A file is flagged when:
  *  - its path carries the work-item fingerprint — the whole id, or ≥2 of its distinctive
- *    words (the PR #151 dropping was `docs/tests/claudemd-144.md` for chunk
- *    `feat-144-claudemd-s1-c1` — no full-id match, two word matches); or
+ *    words of which at least one is the id's NUMBER (the PR #151 dropping was
+ *    `docs/tests/claudemd-144.md` for chunk `feat-144-claudemd-s1-c1`: no full-id match,
+ *    but "claudemd" + "144"). The numeric requirement keeps a legitimate module from
+ *    being flagged just because the chunk is named after the file it produces
+ *    (`feat-201-owner-notify-s1-c1` building `owner-notify.ts` is the normal case, not
+ *    a dropping — an issue number bleeding into a filename is); or
  *  - nothing else in the tree references it (`referenced` is the caller's probe — the
  *    merge leg greps the worktree for the file's name stem).
  * Exempt: co-located `*.test.*` files and `drizzle/` migrations.
@@ -84,9 +88,9 @@ export function flagDroppings(
     const lower = path.toLowerCase();
 
     const wholeId = tokens.some((t) => lower.includes(t));
-    const pathWords = distinctiveWords(lower);
-    const echoes = pathWords.filter((w) => words.has(w));
-    if (wholeId || echoes.length >= 2) {
+    const echoes = distinctiveWords(lower).filter((w) => words.has(w));
+    const numericEcho = echoes.some((w) => /^\d+$/.test(w));
+    if (wholeId || (echoes.length >= 2 && numericEcho)) {
       flags.push({ path, reason: "named after the work item (builder-dropping fingerprint)" });
       continue;
     }
