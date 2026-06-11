@@ -16,6 +16,7 @@ In one pass, across the diff:
 - **Cross-cutting impact** — does this break assumptions elsewhere in the repo?
 - **Conflicts with direction** — does it contradict a documented decision or the stated conventions?
 - **Shape** — oversized or multi-concern files, layering violations, hand-written types that should be generated, unstructured logging — judged against *this project's* conventions and documented decisions, whatever they are.
+- **New files must justify their existence** — every file the diff ADDS should be imported, wired into the build, or indexed from the docs tree. An unreferenced new file, a self-verification checklist, builder notes, or anything named after a session/chunk/issue id is a finding by default (major — it blocks): build paperwork belongs in the work record, not the repo. Co-located test files and generated migrations are wired by convention and exempt.
 
 ## Verify, don't speculate
 

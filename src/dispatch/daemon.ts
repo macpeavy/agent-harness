@@ -273,10 +273,16 @@ export class DispatchDaemon {
   // Squash-merge a cleanly-reviewed chunk into its session-main branch (ADR 0020). The
   // session-main branch rides the dispatch row, so the daemon stays plan-agnostic. A
   // dispatch with no sessionBranch (legacy build-off-main) has nothing to merge into.
+  // Droppings flags (AGENT-53) come back annotated on the PR; log them for the operator.
   private async merge(id: string, branch: string): Promise<void> {
     const dispatch = this.require(id);
     if (!dispatch.sessionBranch) return;
-    await this.legs.merge({ branch, sessionBranch: dispatch.sessionBranch, title: dispatch.title }, this.config);
+    const result = await this.legs.merge(
+      { branch, sessionBranch: dispatch.sessionBranch, title: dispatch.title, ids: [dispatch.id, dispatch.issueId] },
+      this.config,
+    );
+    for (const f of result.flagged)
+      console.warn(`dispatch ${id} landed a flagged file (${f.reason}): ${f.path} — annotated on the session PR`);
   }
 
   // A model turn timed out (ADR 0023 row 3): park it for the chief through the central surface —

@@ -122,7 +122,7 @@ function fakeLegs(
     },
     async merge(target) {
       rec.merge.push(target);
-      const result: MergeResult = { merged: true };
+      const result: MergeResult = { merged: true, flagged: [] };
       return result;
     },
   };
