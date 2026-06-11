@@ -189,13 +189,17 @@ export class PlanRepository {
     if (dir && dir !== ".") mkdirSync(dir, { recursive: true });
 
     this.sqlite = new Database(dbPath);
-    this.sqlite.run("PRAGMA journal_mode = WAL");
-    this.sqlite.run("PRAGMA foreign_keys = ON"); // the FKs are real integrity, not decoration
     // Wait, don't throw, on a write-lock contention (ADR 0016). `make up` co-launches multiple
     // writer processes against this one file; without this a writer that loses the race gets
     // SQLITE_BUSY ("database is locked") immediately and the process exits 1 (the daemon crash).
-    // 5s of retry comfortably covers these tiny transactions.
+    // 5s of retry comfortably covers these tiny transactions. Set FIRST — busy_timeout is
+    // connection-local and takes no lock, while the WAL pragma below is itself a lock-taking
+    // statement: with several processes opening this file at once, a connection that runs WAL
+    // before arming its timeout throws SQLITE_BUSY_RECOVERY instead of waiting (the status
+    // pane's startup flash).
     this.sqlite.run("PRAGMA busy_timeout = 5000");
+    this.sqlite.run("PRAGMA journal_mode = WAL");
+    this.sqlite.run("PRAGMA foreign_keys = ON"); // the FKs are real integrity, not decoration
     this.db = drizzle(this.sqlite);
     if (opts.migrate !== false) migrate(this.db, { migrationsFolder: MIGRATIONS_DIR });
   }

@@ -41,9 +41,11 @@ export class RuntimeRepository {
     if (dir && dir !== ".") mkdirSync(dir, { recursive: true });
 
     this.sqlite = new Database(dbPath);
+    // busy_timeout FIRST (no lock to set) — the WAL pragma takes a lock, and arming the
+    // timeout after it lets a co-launching process throw SQLITE_BUSY_RECOVERY at startup.
+    this.sqlite.run("PRAGMA busy_timeout = 5000");
     this.sqlite.run("PRAGMA journal_mode = WAL");
     this.sqlite.run("PRAGMA foreign_keys = ON");
-    this.sqlite.run("PRAGMA busy_timeout = 5000");
     this.db = drizzle(this.sqlite);
     if (opts.migrate !== false) migrate(this.db, { migrationsFolder: MIGRATIONS_DIR });
   }
