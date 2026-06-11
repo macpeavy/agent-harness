@@ -97,3 +97,22 @@ via ci_signaled_sha, re-push re-arms) and amend_chunk (MCP tool + service method
 pendingFindings reopen channel for chief-diagnosed defects). Migration 0013 (three nullable
 columns). Persona updated (amend_chunk + close_session-is-usually-automatic). Note: gh GraphQL
 gave 401s this session while REST worked — PR #148 and its review went via REST.
+
+## 2026-06-11 — companion session: the five shakedown findings (PR #157)
+
+One PR for AGENT-52..56 (GH #152–156), the findings from the first build-direct run (PR #151).
+AGENT-55 was the load-bearing one: amend-round escalations were unroutable (dispatch escalated,
+chunk stuck at done, promote/redecompose throwing) — fixed per new ADR 0027 with three state
+edges (chunk done→escalated, session review→needs-attention, dispatch escalated→amending);
+promote on an amend escalation now resumes the SAME dispatch as a strong-tier amend against
+kept pendingFindings; escalation_reason is never null. Verified against a rewound COPY of the
+live repro db (live db untouched, per instruction). AGENT-54: owner-response detection on the
+in-review probe (owner_response_at + signaled stamp, migration 0014), notify-pass wake →
+address_review; pr-review leg now reads Conversation-tab comments and filters the bot identity
+(gh-identity.ts, AH_BOT_LOGIN). AGENT-52: tmux + ntfy notifier channels over the console floor;
+fleet/history render review as "awaiting your review". AGENT-53: acceptance-field wording at
+the planning layer, reviewer new-file dimension, deterministic droppings check at land
+(annotates the session PR, non-blocking; fingerprint requires a numeric id echo after a
+self-review fix). AGENT-56: chief persona "Tool errors and ground truth" section + a 3-command
+read-only gh allowlist (pr view/diff/checks) in opencode.json. 470 tests green; no CI on the
+repo, local green is the bar. Awaiting owner merge of PR #157.
